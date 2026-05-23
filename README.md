@@ -1,12 +1,41 @@
-# FoodGuru: Production-Grade RAG System from the Yelp Data
+# RezRag: Production-Grade RAG System on the Yelp Business Review Dataset
 
-**FoodGuru** is a high-performance Retrieval-Augmented Generation (RAG) system engineered to provide grounded, location-aware restaurant recommendations. It leverages a **Hybrid Search Architecture** (Dense Vectors + Sparse Keywords) fused with a Cross-Encoder Reranker to retrieve precise context from the Yelp Academic Dataset, which is then synthesized by a 4-bit quantized LLM.
+**RezRag** is a high-performance Retrieval-Augmented Generation (RAG) system engineered to provide grounded, location-aware restaurant recommendations. It leverages a **Hybrid Search Architecture** (Dense Vectors + Sparse Keywords) fused with a Cross-Encoder Reranker to retrieve precise context from the Yelp Academic Dataset, which is then synthesized by a 4-bit quantized LLM.
 
 The system is architected as a set of decoupled, asynchronous microservices to ensure scalability and fault tolerance.
 
 ![Demo GIF](data/demo.gif)
 
+> ⚡ **Live Demo:** [yelp-restaurant-rag.vercel.app](https://yelp-restaurant-rag.vercel.app)
+> First request after inactivity takes ~15–20s (serverless cold start while E5 loads into memory). Subsequent queries respond faster.
+
 ---
+
+## What's New — Production Deployment
+
+The original local prototype has been extended into a fully deployed, cloud-native system:
+
+### Serverless Backend (Modal)
+Both microservices are deployed on [Modal](https://modal.com) — a serverless GPU/CPU platform that scales to zero between requests and cold-starts on demand.
+
+| Service | URL | Resources |
+| :--- | :--- | :--- |
+| **Retriever** | `https://megumind6172--food-rag-retriever-serve.modal.run` | 4 CPU, 3GB RAM |
+| **Generator** | `https://megumind6172--food-rag-generator-serve.modal.run` | 2 CPU, 1GB RAM |
+
+Key deployment decisions:
+- E5-large-v2 and CrossEncoder models pre-cached in a Modal **Volume** to avoid re-downloading on cold start
+- `keep_warm=1` on the retriever keeps one container warm to eliminate cold start latency
+- Generator calls **Groq API** (`qwen-2.5-32b`) instead of loading a local LLM — no GPU required in production
+
+### Frontend (Vercel + Next.js)
+A new Next.js frontend replaces the original chat interface, deployed on Vercel
+
+### Retrieval Optimizations
+- Reduced `INITIAL_K` from 50 → 8 (reranking fewer candidates cuts reranker time from ~2.4s → ~400ms)
+- CrossEncoder truncates documents to 400 chars before reranking (attention scales quadratically)
+- Qdrant cluster co-located in same cloud region as Modal deployment (GCP `us-east4`) to eliminate cross-cloud latency
+- Query result cache (diskcache / SQLite) with 6-hour TTL — repeated queries return instantly
 
 ## Technical Architecture
 
@@ -43,30 +72,40 @@ Retrieval is not a single step but a cascade of filters designed to maximize pre
 
 ### 3. The Generator (LLM)
 
-* **Model:** `Qwen/Qwen2.5-3B-Instruct`. Chosen for its superior reasoning capabilities at small parameter counts.
+* **Model(On Device):** `Qwen/Qwen2.5-3B-Instruct`. Chosen for its superior reasoning capabilities at small parameter counts.
 * **Quantization:** Loaded in **4-bit NF4** (Normal Float 4) format using `bitsandbytes`. This reduces VRAM usage from ~7GB to ~2.5GB, allowing high-performance inference on consumer hardware (RTX 3060/4060).
 * **Attention:** Utilizes **Flash Attention 2** (via `sdpa` implementation) for linear scaling with context length.
 * **Streaming:** Responses are streamed token-by-token using Python Generators and Server-Sent Events (NDJSON) to minimize Time-To-First-Token (TTFT).
+* **Model(Live Demo):** `Qwen/Qwen2.5-32B` via **Groq API**. Zero GPU cost, ~500ms TTFT
 
 ---
 
 ## 📂 Project Structure
 
 ```bash
-foodguru/
+RezRag/
 ├── data/                    # Storage for pickle, parquet, and vectors
 ├── config.py                # Centralized configuration
 ├── pipeline.py              # Raw Data Preprocessing
 ├── chunker.py               # Semantic Chunking
 ├── embedder.py              # Vector & BM25 Generation
 ├── ingestor.py              # Qdrant Ingestion
-├── retrieval_service.py     # Hybrid Search & Reranking Class
-├── retriever.py             # API Wrapper for Retrieval Service 
-├── generator.py             # LLM Loading & Prompt Building
-├── generator_app.py         # API Wrapper for Generator Service (Port 9000)
-├── e5_server.py             # Standalone Embedding Microservice (Port 5000)
-├── run_servers.py           # Orchestrator to launch all microservices
-└── requirements.txt         # Python dependencies
+├── retriever.py             # Hybrid Search, RRF, Reranker (FastAPI)
+├── generator.py             # Groq LLM + Prompt Builder (FastAPI)
+├── modal_retriever.py       # Modal serverless deployment — retriever
+├── modal_generator.py       # Modal serverless deployment — generator
+├── cache.py                 # diskcache query result cache
+├── observability.py         # Prometheus metrics + loguru logging
+├── food-rag/                # Next.js frontend
+│   └── src/
+│       ├── app/
+│       │   ├── page.tsx           # Main chat interface
+│       │   └── readme/page.tsx    # Live README renderer
+│       └── components/
+│           ├── MapPanel.tsx       # Leaflet map + marker interactions
+│           ├── RestaurantCard.tsx # Result cards with Maps/Yelp links
+│           └── TimingBar.tsx
+└── requirements.txt
 
 ```
 
@@ -131,11 +170,14 @@ QDRANT_API_KEY=  # Leave blank for local instance
 E5_URL=http://127.0.0.1:5000/embed
 RETRIEVER_URL=http://127.0.0.1:8000/retrieve
 
+GROQ_API_KEY=gsk_...
+GROQ_MODEL_ID=qwen-2.5-32b
+
 ```
 
-### 5. Node.js / Next.js Setup
+### 5. Frontend Setup
 
-FoodGuru includes a Node.js frontend/backend. Follow these steps to set it up:
+RezRag includes a Node.js frontend/backend. Follow these steps to set it up:
 
 Create the Next.js app inside a folder called rag-chat:
 
@@ -162,6 +204,12 @@ cp -r rag-chat/* src/
 Start the Node.js app:
 ```
 npm run dev
+```
+
+```ini
+# food-rag/.env.local
+NEXT_PUBLIC_GENERATOR_URL=http://localhost:9000
+NEXT_PUBLIC_STADIA_API_KEY=your_stadia_key
 ```
 
 ---
@@ -206,18 +254,16 @@ python ingestor.py
 
 ---
 
-## Phase 2: Running the Microservices
+## Phase 2: Running the Microservices Locally
 
-Used a custom orchestrator (`run_servers.py`) to launch three separate `uvicorn` processes.
 ```bash
-python run_servers.py
-
+uvicorn retriever:app --port 8000
+uvicorn generator:app --port 9000
 ```
 
 **Service Status:**
 | Microservice | URL | Port | Role |
 | :--- | :--- | :--- | :--- |
-| **Embedding** | `http://127.0.0.1:5000` | 5000 | Converts query text to vectors on-demand. |
 | **Retrieval** | `http://127.0.0.1:8000` | 8000 | Handles Hybrid Search, RRF Fusion, and Reranking. |
 | **Generator** | `http://127.0.0.1:9000` | 9000 | The main RAG Chat Interface. Streams LLM tokens. |
 
@@ -279,4 +325,6 @@ Used to debug the search quality without waiting for the LLM generation.
 1. **Parquet & PyTorch Formats:** Replaced standard CSV/JSON/Pickle intermediate files with **Parquet** (for metadata) and **.pt Tensors** (for vectors). 
 2. **Pandas Vectorization:** `chunker.py` used `df.explode()` and `df.melt()` instead of expensive `for` loops. This moves the iteration logic to C-level Pandas optimizations, speeding up processing.
 3. **Generator-Based Ingestion:** The `ingestor.py` does not load the full dataset into RAM. It lazily reads from the disk and yields batches to the Qdrant client, allowing the ingestion of datasets larger than system RAM.
-4. **Flash Attention 2:** The LLM loader enables `attn_implementation="sdpa"`, utilizing PyTorch's Scaled Dot Product Attention kernel optimization for faster inference.
+4. **Query cache** — diskcache (SQLite-backed) with 6-hour TTL; repeated queries skip retrieval entirely
+5. **Qdrant co-location** — database and compute in same cloud region eliminates cross-cloud latency (~200ms saved)
+
