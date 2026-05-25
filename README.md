@@ -1,6 +1,6 @@
 # RezRag: Production-Grade RAG System on the Yelp Business Review Dataset
 
-**RezRag** is a high-performance Retrieval-Augmented Generation (RAG) system engineered to provide grounded, location-aware restaurant recommendations. It leverages a **Hybrid Search Architecture** (Dense Vectors + Sparse Keywords) fused with a Cross-Encoder Reranker to retrieve precise context from the Yelp Academic Dataset, which is then synthesized by a 4-bit quantized LLM.
+**RezRag** is a high-performance Retrieval-Augmented Generation (RAG) system engineered to provide grounded, location-aware restaurant recommendations  **built entirely from scratch without LangChain, LlamaIndex, or any RAG framework.** It leverages a **Hybrid Search Architecture** (Dense Vectors + Sparse Keywords) fused with a Cross-Encoder Reranker to retrieve precise context from the Yelp Academic Dataset, which is then synthesized by a 4-bit quantized LLM.
 
 The system is architected as a set of decoupled, asynchronous microservices to ensure scalability and fault tolerance.
 
@@ -11,7 +11,67 @@ The system is architected as a set of decoupled, asynchronous microservices to e
 
 ---
 
-## What's New — Production Deployment
+## Why From Scratch?
+
+To demonstrate a real understanding of everything that happens under the hood of RAG Frameworks. RezRag is built with full control and zero abstractions. No LangChain. No LlamaIndex. No RAG frameworks. Every component (hybrid search, BM25, RRF fusion, cross-encoder reranking, streaming microservices) is hand-rolled in Python. :
+
+| Component | Built With |
+| :--- | :--- |
+| Dense retrieval | `sentence-transformers` E5-large-v2 (1024-dim) |
+| Sparse retrieval | Custom BM25Okapi on retrieved candidates |
+| Fusion | Hand-rolled Reciprocal Rank Fusion (RRF) |
+| Reranking | CrossEncoder ms-marco-MiniLM-L-6-v2 |
+| Streaming | FastAPI `StreamingResponse` + NDJSON |
+| RAG Framework | **None** |
+
+---
+
+## Data Pipeline — From Raw Yelp JSON to Production Vector DB
+
+The entire data pipeline is hand-built from the raw 
+[Yelp Academic Dataset](https://www.yelp.com/dataset) — ~10GB across multiple 
+JSON files — with no managed loaders, pre-processed datasets, or data APIs.
+
+### Challenges solved:
+
+**1. Multi-file joins at scale** — `business.json` and `review.json` are separate 
+files joined by `business_id`. Processed in streaming fashion to avoid loading 
+gigabytes into RAM simultaneously.
+
+**2. Category filtering** — Yelp categories are free-text comma lists. Built a 
+keyword filter to isolate restaurants from the 1000+ other business types in the 
+dataset.
+
+**3. Custom Restaurant Score** — raw star ratings are unreliable (3 reviews at 5★ 
+outranks 2000 reviews at 4.7★). Built a weighted formula balancing rating, review 
+volume, and recency to surface genuinely high-quality restaurants.
+
+**4. Balanced sentiment sampling** — naive top-N sampling produces all 5-star 
+results. Sampled across sentiment buckets (positive/neutral/negative) so the 
+retriever has context on tradeoffs, wait times, and common complaints — not just 
+hype.
+
+**5. Tiktoken-bounded chunking** — reviews range from 2 sentences to 20 paragraphs. 
+Character-based splitting breaks semantic coherence. Used tiktoken to bound chunks 
+by token count so every chunk fits cleanly within E5-large-v2's 512-token context 
+window.
+
+**6. Typed chunk structure** — chunks are not raw review text. Each restaurant 
+produces three chunk types: Business Profile (name, location, hours, category), 
+Positive Review Summary, Negative Review Summary. This allows the retriever to 
+surface different facets depending on query intent.
+
+**7. Embedding at scale** — E5-large-v2 (1024 dimensions) run over tens of 
+thousands of chunks with batched inference, saved as `.pt` tensors for fast reload 
+without re-embedding.
+
+**8. Stable deduplication** — UUID5 (deterministic, content-based) IDs prevent 
+duplicate points on re-ingestion. Re-running the pipeline is idempotent.
+
+**9. Generator-based ingestion** — Qdrant upload streams in batches of 256 via 
+Python generators. RAM usage stays flat regardless of dataset size.
+
+## Production Deployment
 
 The original local prototype has been extended into a fully deployed, cloud-native system:
 
@@ -20,8 +80,8 @@ Both microservices are deployed on [Modal](https://modal.com) — a serverless G
 
 | Service | URL | Resources |
 | :--- | :--- | :--- |
-| **Retriever** | `https://megumind6172--food-rag-retriever-serve.modal.run` | 4 CPU, 3GB RAM |
-| **Generator** | `https://megumind6172--food-rag-generator-serve.modal.run` | 2 CPU, 1GB RAM |
+| **Retriever** | `https://megumind6172--food-rag-retriever-serve.modal.run` | 2 CPU, 2GB RAM |
+| **Generator** | `https://megumind6172--food-rag-generator-serve.modal.run` | 2 CPU, 0.5GB RAM |
 
 Key deployment decisions:
 - E5-large-v2 and CrossEncoder models pre-cached in a Modal **Volume** to avoid re-downloading on cold start
@@ -72,9 +132,8 @@ Retrieval is not a single step but a cascade of filters designed to maximize pre
 
 ### 3. The Generator (LLM)
 
-* **Model(On Device):** `Qwen/Qwen2.5-3B-Instruct`. Chosen for its superior reasoning capabilities at small parameter counts.
+* **Model(On Device):** `Qwen/Qwen2.5-7B-Instruct`. Chosen for its superior reasoning capabilities at small parameter counts.
 * **Quantization:** Loaded in **4-bit NF4** (Normal Float 4) format using `bitsandbytes`. This reduces VRAM usage from ~7GB to ~2.5GB, allowing high-performance inference on consumer hardware (RTX 3060/4060).
-* **Attention:** Utilizes **Flash Attention 2** (via `sdpa` implementation) for linear scaling with context length.
 * **Streaming:** Responses are streamed token-by-token using Python Generators and Server-Sent Events (NDJSON) to minimize Time-To-First-Token (TTFT).
 * **Model(Live Demo):** `Qwen/Qwen2.5-32B` via **Groq API**. Zero GPU cost, ~500ms TTFT
 
