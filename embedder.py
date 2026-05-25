@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 class YelpEmbedder:
+    """
+    Pipeline for generating dense embeddings and sparse BM25 indices
+    from chunked Yelp restaurant data.
+    """
+
     def __init__(self):
         self.device = config.DEVICE
         self.embedding_model = SentenceTransformer(
@@ -71,7 +76,13 @@ class YelpEmbedder:
         self.df_chunks.to_parquet(config.METADATA_PATH)
 
     def generate_vectors(self, load_precomputed: bool = True):
-        """Generates dense embeddings using E5."""
+        """
+        Generates dense embeddings using the specified SentenceTransformer model
+        or loads precomputed ones from disk.
+
+        Args:
+            load_precomputed (bool): Whether to load precomputed embeddings if available. Defaults to True.
+        """
         if not self.all_text_chunks:
             self.load_and_flatten_data()
 
@@ -98,7 +109,13 @@ class YelpEmbedder:
             torch.save(vectors, config.EMBEDDINGS_PATH)
 
     def build_bm25(self, load_precomputed: bool = True):
-        """Builds sparse BM25 index."""
+        """
+        Builds a sparse BM25 index for keyword-based search
+        or loads a precomputed index from disk.
+
+        Args:
+            load_precomputed (bool): Whether to load a precomputed BM25 index if available. Defaults to True.
+        """
         if not self.all_text_chunks:
             self.load_and_flatten_data()
 
@@ -123,6 +140,9 @@ class YelpEmbedder:
             logger.info(f"BM25 index saved to {config.BM25_PATH}")
 
     def run(self):
+        """
+        Executes the embedding and indexing pipeline in order.
+        """
         self.load_and_flatten_data()
         self.generate_vectors()
         self.build_bm25()

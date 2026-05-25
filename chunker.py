@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 
 
 class YelpChunking:
+    """
+    Pipeline for chunking Yelp restaurant data and reviews into token-limited batches.
+    """
+
     def __init__(self):
         self.enc = tiktoken.get_encoding(config.TOKEN_ENCODING)
         self.preprocessed_path = config.DATA_DIR / "preprocessed.pkl"
@@ -23,7 +27,15 @@ class YelpChunking:
         self.df = None
 
     def _clean_text(self, t: str) -> str:
-        """Fast regex text cleaning."""
+        """
+        Fast regex text cleaning to remove extra whitespace and newlines.
+
+        Args:
+            t (str): The text string to clean.
+
+        Returns:
+            str: The cleaned text.
+        """
         if not t:
             return ""
         t = re.sub(r"-\s*\n\s*|\r", " ", t)
@@ -31,7 +43,15 @@ class YelpChunking:
         return t.strip()
 
     def _parse_attributes(self, attr_str: str) -> List[str]:
-        """Parses the nested string dictionary for facility attributes."""
+        """
+        Parses the nested string dictionary for facility attributes.
+
+        Args:
+            attr_str (str): The stringified dictionary of attributes.
+
+        Returns:
+            List[str]: A list of extracted business features.
+        """
         features = []
         if pd.isna(attr_str):
             return []
@@ -62,7 +82,15 @@ class YelpChunking:
         return features
 
     def _parse_vibes(self, attr_str: str) -> List[str]:
-        """Parses nested dictionary for vibe keywords."""
+        """
+        Parses nested dictionary for vibe keywords.
+
+        Args:
+            attr_str (str): The stringified dictionary of attributes containing vibes.
+
+        Returns:
+            List[str]: A list of extracted vibe descriptions.
+        """
         vibes = []
         if pd.isna(attr_str):
             return []
@@ -95,6 +123,13 @@ class YelpChunking:
         """
         Batches reviews into chunks that fit within the token limit.
         Optimized to use fewer tiktoken calls.
+
+        Args:
+            reviews (List[str]): List of review texts to batch.
+            header (str): The header string to prepend to each chunk.
+
+        Returns:
+            List[str]: A list of batched review strings.
         """
         if not reviews or not isinstance(reviews, list):
             return []
@@ -137,6 +172,12 @@ class YelpChunking:
         """
         Generates all chunks for a single restaurant row.
         Returns a Series to be expanded into DataFrame columns.
+
+        Args:
+            row (pd.Series): A single row from the restaurant DataFrame.
+
+        Returns:
+            pd.Series: A Series containing batched chunks for positive, neutral, negative reviews, and a flat list of all chunks.
         """
         name = row["name"]
         city = row["city"]
@@ -185,6 +226,9 @@ class YelpChunking:
         )
 
     def load_and_format(self):
+        """
+        Loads preprocessed data and formats the categories column.
+        """
         logger.info(f"Loading data from {self.preprocessed_path}...")
         self.df = pd.read_pickle(self.preprocessed_path)
 
@@ -197,6 +241,9 @@ class YelpChunking:
         logger.info(f"Loaded {len(self.df)} restaurants.")
 
     def run(self):
+        """
+        Execute the Yelp chunking pipeline in order.
+        """
         self.load_and_format()
 
         logger.info("Generating Chunks (Single Pass)...")

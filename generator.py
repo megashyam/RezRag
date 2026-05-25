@@ -1,7 +1,10 @@
-import torch
 import gc
 from threading import Thread
+import logging
+import os
+
 from typing import List, Dict, Any, Generator
+
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
@@ -18,19 +21,48 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import asyncio
+import torch
+
+from groq import Groq, APIError, RateLimitError
 
 import config
 
+_gen_lock = asyncio.Semaphore(1)
+
+
+from observability import (
+    setup_logging,
+    attach_prometheus,
+    Timer,
+    QUERY_COUNTER,
+    STAGE_LATENCY,
+)
+from loguru import logger
+
 
 class RAGGenerator:
+    """
+    Service class responsible for managing LLM generation logic.
+    Supports both a local, quantized Qwen model and external Groq API inference
+    for Retrieval-Augmented Generation.
+    """
+
     def __init__(self):
         self.tokenizer = None
         self.model = None
+        self.client = None
         self.device = config.DEVICE
 
-    def load_model(self):
-        """Loads the quantized model into memory."""
-        print(f"[Generator] Loading model: {config.MODEL_ID} on {self.device}...")
+    def load_model_qwen_local(self):
+        """
+        Loads the specified Qwen model and tokenizer locally into memory
+        using HuggingFace Transformers and BitsAndBytes quantization.
+
+        Raises:
+            Exception: If model loading fails due to OOM or missing weights.
+        """
+        logger.info(f"[Generator] Loading model: {config.MODEL_ID} on {self.device}...")
 
         try:
             bnb_config = BitsAndBytesConfig(**config.BNB_CONFIG)
@@ -38,27 +70,59 @@ class RAGGenerator:
             self.tokenizer = AutoTokenizer.from_pretrained(
                 config.MODEL_ID, use_fast=True
             )
+
+            if self.tokenizer.pad_token_id is None:
+                self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+
             self.model = AutoModelForCausalLM.from_pretrained(
                 config.MODEL_ID,
-                torch_dtype=torch.float16,
                 quantization_config=bnb_config,
                 attn_implementation="sdpa",
+                device_map="auto",
             )
             self.model.eval()
-            print("[Generator] Model loaded successfully.")
+            logger.info("[Generator] Model loaded successfully.")
         except Exception as e:
-            print(f"[Generator] Critical Error loading model: {e}")
+            logger.error(f"[Generator] Critical Error loading model: {e}")
             raise e
 
-    def _build_prompt(
+    def load_model_groq(self):
+        """
+        Initializes the Groq client for external inference using
+        the configured Groq API key and model ID.
+
+        Raises:
+            ValueError: If the GROQ_API_KEY environment variable is not set.
+        """
+        print(f"[Generator] Loading model: Groq-{config.GROQ_MODEL_ID} ...")
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise ValueError("GROQ_API_KEY environment variable not set.")
+        self.client = Groq(api_key=api_key)
+        logger.info(f"Groq {config.GROQ_MODEL_ID} Model loaded successfully.")
+
+    def _build_prompt_qwen_local(
         self, query: str, context_snippets: List[Dict[str, Any]]
     ) -> torch.Tensor:
-        """Constructs the system and user prompts using retrieved context."""
+        """
+        Constructs the system and user prompts using retrieved context
+        and tokenizes them for the local Qwen model.
 
+        Args:
+            query (str): The user's query string.
+            context_snippets (List[Dict[str, Any]]): Retrieved snippets from the vector database.
+
+        Returns:
+            torch.Tensor: A tensor dictionary containing `input_ids` and `attention_mask`.
+        """
+
+        # 1. Format Context
         context_text_list = []
         for res in context_snippets:
+            # Fallbacks for messy data keys
             name = res.get("restaurant") or res.get("name") or "Unknown"
             text = res.get("text") or res.get("chunks") or res.get("content") or ""
+            # text = text[: config.MAX_SNIPPET_CHARS]
             city = res.get("city", "")
 
             snippet = (
@@ -71,29 +135,8 @@ class RAGGenerator:
 
         context_block = "\n".join(context_text_list)
 
-        system_msg = (
-            "You are a knowledgeable and helpful local food recommendation guide.\n\n"
-            "You are given curated context snippets extracted from Yelp restaurant data "
-            "using semantic search and ranking. Each snippet may represent a portion of "
-            "restaurant description with customer reviews.\n\n"
-            "Your task is to answer the query by carefully analyzing the provided "
-            "context and producing a grounded, well-reasoned recommendation.\n\n"
-            "Before answering, internally identify and synthesize the most relevant "
-            "information from the context. Do NOT reveal this internal analysis. "
-            "Only return the final answer.\n\n"
-            " Use ONLY the provided context snippets; do not rely on outside knowledge.\n"
-            "- Do NOT invent restaurants, dishes, services, prices, or locations.\n"
-            " Combine and summarize multiple snippets from the same restaurant into a SINGLE coherent description.\n"
-            f""" Be eloquent and offer long explanations to support each recommendation.:
-                    - Give summary of why it fits the user query.
-                    - Highlights of menu items or specialties,atmosphere, ambiance, or unique features.
-                    - Customer impressions or reviews.
-                    - Optional tips or recommendations.
-            """
-            " Give 5-7 restaurant suggestions (if available).\n"
-            " If reviews mention drawbacks or mixed experiences, communicate them politely and constructively without being blunt or harsh.\n"
-            " Maintain a friendly,casual, informative tone.\n"
-        )
+        # 2. System Instruction
+        system_msg = config.QWEN_SYSTEM_PROMPT
 
         user_msg = f"User Query: {query}\n\nContext:\n{context_block}"
 
@@ -102,126 +145,387 @@ class RAGGenerator:
             {"role": "user", "content": user_msg},
         ]
 
+        # 3. Apply Template
         return self.tokenizer.apply_chat_template(
-            messages, tokenize=True, add_generation_prompt=True, return_tensors="pt"
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_tensors="pt",
+            return_dict=True,
+            # truncation=True,
+            # max_length=config.MAX_INPUT_TOKENS,
         ).to(self.device)
 
-    def generate_stream(
+    def _build_prompt_groq(self, query: str, context_snippets: List[Dict[str, Any]]):
+        """
+        Constructs the chat message array for the Groq API, embedding
+        the context into the user's prompt.
+
+        Args:
+            query (str): The user's query string.
+            context_snippets (List[Dict[str, Any]]): Retrieved snippets from the vector database.
+
+        Returns:
+            List[Dict[str, str]]: A list of message dictionaries compatible with the OpenAI/Groq chat API format.
+        """
+
+        # 1. Format Context
+        context_text_list = []
+        for res in context_snippets:
+            # Fallbacks for messy data keys
+            name = res.get("restaurant") or res.get("name") or "Unknown"
+            text = res.get("text") or res.get("chunks") or res.get("content") or ""
+            # text = text[: config.MAX_SNIPPET_CHARS]
+            city = res.get("city", "")
+
+            snippet = (
+                f"Restaurant: {name}\n"
+                f"Location: {res.get('address', 'Unknown')} ({city})\n"
+                f"Description: {text}\n"
+                f"---"
+            )
+            context_text_list.append(snippet)
+
+        context_block = "\n".join(context_text_list)
+
+        # 2. System Instruction
+        system_msg = config.GROQ_SYSTEM_PROMPT
+
+        user_msg = f"User Query: {query}\n\nContext:\n{context_block}"
+
+        return [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": user_msg},
+        ]
+
+    def _run_generation_qwen_local(self, **kwargs):
+        """
+        Executes local generation.
+
+        Args:
+            **kwargs: Arbitrary keyword arguments passed to `model.generate()`.
+        """
+
+        with torch.no_grad():
+            self.model.generate(**kwargs)
+
+    def generate_stream_qwen(
         self, query: str, context_snippets: List[Dict[str, Any]]
     ) -> Generator[str, None, None]:
-        """Streams tokens from the LLM in a separate thread."""
+        """
+        Streams tokens from the local LLM in a separate thread.
 
+        Args:
+            query (str): The user's query string.
+            context_snippets (List[Dict[str, Any]]): Context chunks to include in the prompt.
+
+        Yields:
+            str: Next token(s) generated by the model.
+        """
+
+        # Cleanup before generation
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
 
-        inputs = self._build_prompt(query, context_snippets)
+        inputs = self._build_prompt(query, self.trim_context(context_snippets))
 
         streamer = TextIteratorStreamer(
             self.tokenizer, skip_prompt=True, skip_special_tokens=True
         )
 
         generation_kwargs = dict(
-            input_ids=inputs,
+            input_ids=inputs["input_ids"],
+            attention_mask=inputs["attention_mask"],
             max_new_tokens=config.MAX_NEW_TOKENS,
             temperature=config.TEMPERATURE,
             top_p=config.TOP_P,
             do_sample=True,
-            repetition_penalty=1.1,
+            repetition_penalty=1.1,  # Slightly higher penalty for better lists
             eos_token_id=self.tokenizer.eos_token_id,
             pad_token_id=self.tokenizer.eos_token_id,
             streamer=streamer,
+            use_cache=True,
         )
 
-        thread = Thread(target=self.model.generate, kwargs=generation_kwargs)
+        thread = Thread(target=self._run_generation, kwargs=generation_kwargs)
         thread.start()
 
-        for new_text in streamer:
-            yield new_text
+        try:
 
-        thread.join()
+            for new_text in streamer:
+                yield new_text
 
-        del inputs
+        finally:
+            thread.join()
+            del generation_kwargs, inputs, streamer
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+
+    def trim_context(self, snippets, max_chars=2500, trim_length=config.TRIM_LENGTH):
+        """
+        Trims context snippets to prevent exceeding maximum token limits.
+
+        Args:
+            snippets (List[Dict[str, Any]]): List of context dictionaries.
+            max_chars (int, optional): The maximum total characters allowed. Defaults to 2500.
+            trim_length (int, optional): The maximum length for a single snippet. Defaults to config.TRIM_LENGTH.
+
+        Returns:
+            List[Dict[str, Any]]: A list of trimmed snippet dictionaries.
+        """
+        trimmed = []
+        total = 0
+
+        for s in snippets:
+            text = (s.get("text") or "")[:trim_length]
+
+            if total + len(text) > max_chars:
+                break
+
+            s["text"] = text
+            trimmed.append(s)
+            total += len(text)
+
+        return trimmed
+
+    def generate_stream_groq(
+        self, query: str, context_snippets: List[Dict[str, Any]]
+    ) -> Generator[str, None, None]:
+        """
+        Streams tokens from the Groq API completion endpoint.
+
+        Args:
+            query (str): The user query.
+            context_snippets (List[Dict[str, Any]]): Relevant context snippets.
+
+        Yields:
+            str: Text chunks returned dynamically from the API stream.
+
+        Raises:
+            RuntimeError: If the Groq client is not initialized.
+            RateLimitError: If the Groq API rate limits are exceeded.
+            APIError: If a general Groq API error occurs.
+        """
+
+        if self.client is None:
+            raise RuntimeError("Groq client not initialized")
+
+        messages = self._build_prompt_groq(query, self.trim_context(context_snippets))
+
+        with Timer("generator", "groq_stream_init"):
+            try:
+                stream = self.client.chat.completions.create(
+                    model=config.GROQ_MODEL_ID,
+                    messages=messages,
+                    temperature=config.TEMPERATURE,
+                    top_p=config.TOP_P,
+                    # max_completion_tokens=config.MAX_NEW_TOKENS,
+                    reasoning_effort="none",
+                    stream=True,
+                )
+            except RateLimitError as e:
+                logger.warning(f"Groq rate limit: {e}")
+                raise
+            except APIError as e:
+                logger.error(f"Groq API error: {e}")
+                raise
+
+        token_count = 0
+        for chunk in stream:
+            try:
+                delta = chunk.choices[0].delta
+                content = getattr(delta, "content", None)
+                if content:
+                    token_count += 1
+                    yield content
+            except (IndexError, AttributeError):
+                continue
+        logger.debug(f"Stream complete — {token_count} token chunks emitted")
 
 
-gen_state = {}
+# --- Lifespan Management ---
+gen_state: Dict[str, Any] = {}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("--- Starting Generator Service ---")
+    """
+    Manages the FastAPI application startup and shutdown events,
+    specifically loading the Groq model configuration upon startup.
+    """
+    setup_logging("generator")
     gen_state["generator"] = RAGGenerator()
-    gen_state["generator"].load_model()
+    logger.info("Starting generator service (Groq)...")
+    gen_state["generator"].load_model_groq()
     yield
-    print("--- Shutting Down Generator Service ---")
+    logger.info("--- Shutting Down Generator Service ---")
     del gen_state["generator"]
     gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    # if torch.cuda.is_available():
+    #     torch.cuda.empty_cache()
 
 
 app = FastAPI(title="RAG Generator API", lifespan=lifespan)
+attach_prometheus(app, "generator")
+
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Accel-Buffering", "Transfer-Encoding"],
 )
 
 
+# --- Models ---
 class GenerateRequest(BaseModel):
+    """
+    Pydantic schema representing the payload for generation requests.
+    """
+
     query: str
     city: Optional[str] = None
     state: Optional[str] = None
-    top_k: int = 10
+    top_k: int = config.TOP_K
 
 
+# --- Helper Functions ---
 def fetch_context(query: str, top_k: int) -> List[Dict[str, Any]]:
-    """Calls the separate Retriever Microservice."""
-    try:
-        payload = {"query": query, "top_k": top_k, "do_rerank": True}
-        print(f"[API] Fetching context from {config.RETRIEVER_URL}...")
+    """
+    Calls the separate Retriever Microservice to fetch relevant data.
 
-        response = requests.post(config.RETRIEVER_URL, json=payload, timeout=10)
-        response.raise_for_status()
+    Args:
+        query (str): The specific search query to execute.
+        top_k (int): Number of top results to retrieve.
+
+    Returns:
+        tuple: A tuple containing a list of result dictionaries and the retrieval latency in ms.
+    """
+
+    try:
+        payload = {"query": query, "top_k": top_k, "do_rerank": config.DO_RERANK}
+        logger.info(f"[API] Fetching context from {config.RETRIEVER_URL}...")
+        with Timer("generator", "retriever_fetch"):
+            response = requests.post(config.RETRIEVER_URL, json=payload, timeout=60)
+            response.raise_for_status()
+            logger.info(f"[API] Context fetched successfully: {response.json()}")
 
         data = response.json()
-        return data.get("results", [])
+
+        if isinstance(data, list):
+            results = data
+            retrieval_ms = 0
+        else:
+            results = data.get("results", [])
+            retrieval_ms = data.get("retrieval_ms", 0)
+
+        logger.info(f"Retrieved {len(data)} snippets for '{query[:60]}'")
+        return results, retrieval_ms
     except requests.exceptions.RequestException as e:
         print(f"[API] Retrieval Error: {e}")
-        return []
+
+        # Return empty list allows the LLM to say "I don't know" gracefully
+        return [], 0
+
+
+@app.get("/health")
+def health_check():
+    """
+    Health check endpoint to verify service and Groq client availability.
+
+    Returns:
+        Dict: A dictionary mapping the active status of the service.
+    """
+    generator = gen_state.get("generator")
+    if not generator or not generator.client:
+        from fastapi import Response
+
+        return Response(status_code=503)
+
+    return {"status": "active", "service": "Groq Generator"}
 
 
 # --- Endpoints ---
 @app.post("/generate")
 async def generate_endpoint(req: GenerateRequest):
-    generator: RAGGenerator = gen_state.get("generator")
-    if not generator:
-        raise HTTPException(status_code=500, detail="Model not loaded")
+    """
+    Main endpoint for generating LLM responses. Orchestrates fetching context
+    from the retriever service, appending it to the prompt, and streaming back
+    a continuous NDJSON chunked response.
 
-    # Refine Query
-    full_query = req.query
-    if req.city:
-        full_query += f" in {req.city}"
+    Args:
+        req (GenerateRequest): The incoming request payload containing the query and settings.
 
-    # Retrieve Context
-    context_results = fetch_context(full_query, req.top_k)
-    print(f"[API] Retrieved {len(context_results)} snippets.")
+    Returns:
+        StreamingResponse: An NDJSON stream of retrieval metadata, sources, and generated tokens.
 
-    # Stream Response
+    Raises:
+        HTTPException: If the generator model is not loaded in state.
+    """
+    async with _gen_lock:
+        generator: RAGGenerator = gen_state.get("generator")
+        if not generator:
+            raise HTTPException(status_code=500, detail="Model not loaded")
+
+        # 1. Refine Query
+        full_query = req.query
+        if req.city:
+            full_query += f" in {req.city}"
+
+        # 2. Retrieve Context
+        with Timer("generator", "context_fetch"):
+            context_results, retrieval_ms = fetch_context(full_query, req.top_k)
+
+        logger.info(f"[API] Retrieved {len(context_results)} snippets.")
+        QUERY_COUNTER.labels("generator", "started").inc()
+
+        # 3. Stream Response
+
     def response_stream():
+        """
+        Internal generator to yield Server-Sent Events (SSE) or NDJSON chunks
+        for metadata, sources, generating tokens, and eventual exceptions.
+
+        Yields:
+            str: JSON encoded string chunks to be streamed directly to the client.
+        """
+        # A. Send Sources First (JSON)
+        # We strip the heavy 'text' field for the frontend source list to save bandwidth
+        for _ in range(8):
+            yield json.dumps({"type": "ping"}) + "\n"
+        yield json.dumps(
+            {
+                "type": "meta",
+                "data": {
+                    "retrieval_ms": retrieval_ms,
+                    "results_count": len(context_results),
+                    "reranked": config.DO_RERANK,
+                },
+            }
+        ) + "\n"
+
         sources = [
             {
                 "name": r.get("restaurant", "Unknown"),
                 "address": r.get("address"),
                 "lat": r.get("latitude"),
                 "lon": r.get("longitude"),
+                "city": r.get("city"),
+                "state": r.get("state"),
+                "excerpt": (r.get("text").split("--")[1] or "")[:400],
             }
             for r in context_results
         ]
+
+        # print(context_results[0].get("text").split("--")[1][:400])
         yield json.dumps({"type": "sources", "data": sources}) + "\n"
 
+        # B. Send Generation Tokens
         if not context_results:
             yield json.dumps(
                 {
@@ -229,12 +533,39 @@ async def generate_endpoint(req: GenerateRequest):
                     "data": "I couldn't find any restaurants matching that description.",
                 }
             ) + "\n"
+            QUERY_COUNTER.labels("generator", "no_results").inc()
             return
 
         try:
-            for token in generator.generate_stream(req.query, context_results):
+            for token in generator.generate_stream_groq(req.query, context_results):
+                # print(f"YIELD: {repr(token)}", flush=True)
                 yield json.dumps({"type": "token", "data": token}) + "\n"
+            QUERY_COUNTER.labels("generator", "remove success").inc()
+        except RateLimitError:
+            yield json.dumps(
+                {"type": "error", "data": "Rate limit hit — try again shortly."}
+            ) + "\n"
+            QUERY_COUNTER.labels("generator", "rate_limit").inc()
+        except APIError as e:
+            yield json.dumps({"type": "error", "data": f"API error: {e}"}) + "\n"
+            QUERY_COUNTER.labels("generator", "error").inc()
         except Exception as e:
+            logger.error(f"Generation error: {e}")
             yield json.dumps({"type": "error", "data": str(e)}) + "\n"
+            QUERY_COUNTER.labels("generator", "error").inc()
 
-    return StreamingResponse(response_stream(), media_type="application/x-ndjson")
+    return StreamingResponse(
+        response_stream(),
+        media_type="application/x-ndjson",
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache, no-transform",
+            "Transfer-Encoding": "chunked",
+        },
+    )
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=9000)

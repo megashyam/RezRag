@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 
 
 class YelpRestaurantPipeline:
+    """
+    Pipeline for processing Yelp business and review data to rank restaurants.
+    """
+
     def __init__(self):
         self.business_df: Optional[pd.DataFrame] = None
         self.reviews_df: Optional[pd.DataFrame] = None
@@ -28,7 +32,15 @@ class YelpRestaurantPipeline:
 
     @staticmethod
     def _clean_city_names(city: str) -> str:
-        """Applies corrections to city names based on config."""
+        """
+        Applies corrections to city names based on config.
+
+        Args:
+            city (str): The original city name to be cleaned.
+
+        Returns:
+            str: The cleaned and lowercased city name.
+        """
         if not city:
             return ""
 
@@ -42,7 +54,15 @@ class YelpRestaurantPipeline:
 
     @staticmethod
     def _get_dynamic_n(total_restaurants: int) -> int:
-        """Determines the limit of restaurants based on city density."""
+        """
+        Determines the limit of restaurants based on city density.
+
+        Args:
+            total_restaurants (int): The total number of restaurants in a city.
+
+        Returns:
+            int: The dynamic limit of top restaurants to return.
+        """
         if total_restaurants < 20:
             return 20
         elif total_restaurants < 100:
@@ -56,6 +76,15 @@ class YelpRestaurantPipeline:
 
     @staticmethod
     def _get_sentiment(stars: float) -> str:
+        """
+        Determines the sentiment of a restaurant based on its star rating.
+
+        Args:
+            stars (float): The star rating of the restaurant.
+
+        Returns:
+            str: The sentiment label ("positive", "neutral", or "negative").
+        """
         if stars >= 4:
             return "positive"
         elif stars == 3:
@@ -63,7 +92,9 @@ class YelpRestaurantPipeline:
         return "negative"
 
     def _load_and_process_business(self):
-        """Loads business data, filters for restaurants, and cleans city names."""
+        """
+        Loads business data, filters for restaurants, and cleans city names.
+        """
         logger.info("Processing Businesses...")
 
         data = []
@@ -218,6 +249,15 @@ class YelpRestaurantPipeline:
 
         # Top N per city
         def get_top_n(group):
+            """
+            Extracts the top N restaurants for a given city group.
+
+            Args:
+                group (pd.DataFrame): Dataframe partition containing a single city's restaurants.
+
+            Returns:
+                pd.DataFrame: Top N performing restaurants for the given city.
+            """
             n = int(group["dynamic_limit"].iloc[0])
             return group.nlargest(n, "weighted_combined_score")
 
@@ -255,6 +295,15 @@ class YelpRestaurantPipeline:
 
         # Sampling Logic
         def sample_balanced_reviews(group):
+            """
+            Samples a balanced subset of reviews across different sentiments.
+
+            Args:
+                group (pd.DataFrame): Dataframe partition containing reviews for a single business.
+
+            Returns:
+                pd.DataFrame: A sampled dataframe of balanced reviews by sentiment.
+            """
             sentiment_counts = group["sentiment"].value_counts(normalize=True)
             sampled = []
             for sentiment in ["positive", "neutral", "negative"]:

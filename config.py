@@ -1,17 +1,18 @@
 from pathlib import Path
 from dotenv import load_dotenv
-import torch
 
 load_dotenv()
 
 import os
 from pathlib import Path
+import torch
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
 # Paths
 DATA_DIR = Path("data")
-BUSINESS_PATH = #add path to the yelp_academic_dataset_business.json file
-REVIEW_PATH = # add path to the yelp_academic_dataset_review.json file
+BUSINESS_PATH = "yelp_academic_dataset_business.json"
+REVIEW_PATH = "yelp_academic_dataset_review.json"
 OUTPUT_PATH = DATA_DIR / "preprocessed.pkl"
 CHUNKED_DATA_PATH = DATA_DIR / "chunked_data.pkl"
 PRECOMPUTED_PATH = DATA_DIR / "vector_embeddings_new.pt"
@@ -36,11 +37,12 @@ FILTER_YEAR = 2018
 
 # Parameters
 BATCH_SIZE = 32
-MAX_TOKENS = 512
-TOP_K = 10
-INITIAL_K = 50
+MAX_TOKENS = 256
+TOP_K = 5
+INITIAL_K = 8
 RRF_K = 60
-MAX_DUPLICATES = 2
+MAX_DUPLICATES = 1
+DO_RERANK = True
 
 # Qdrant Configuration
 QDRANT_URL = os.getenv("QDRANT_URL")
@@ -61,11 +63,17 @@ OVERHEAD_TOKENS = 4
 RETRIEVER_URL = os.environ.get("RETRIEVER_URL")
 E5_URL = os.environ.get("E5_URL")
 
+# Groq Configuration
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_MODEL_ID = "qwen/qwen3-32b"
+
 # Model Configuration
 MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"
 MAX_NEW_TOKENS = 700
-TEMPERATURE = 0.6
-TOP_P = 0.9
+TEMPERATURE = 0.2
+TOP_P = 0.7
+TRIM_LENGTH = 350
+MAX_INPUT_TOKENS = 20000
 
 # Quantization Settings
 BNB_CONFIG = {
@@ -237,3 +245,42 @@ VIBE_KEYWORDS = {
     "casual",
     "romantic",
 }
+
+
+QWEN_SYSTEM_PROMPT = (
+    "You are a knowledgeable and helpful local food recommendation guide.\n\n"
+    "You are given curated context snippets extracted from Yelp restaurant data "
+    "using semantic search and ranking. Each snippet may represent a portion of "
+    "restaurant description with customer reviews.\n\n"
+    "Your task is to answer the query by carefully analyzing the provided "
+    "context and producing a grounded, well-reasoned recommendation.\n\n"
+    "Before answering, internally identify and synthesize the most relevant "
+    "information from the context. Do NOT reveal this internal analysis. "
+    "Only return the final answer.\n\n"
+    " Maintain a friendly,casual, informative tone.\n"
+    " Use ONLY the provided context snippets; do not rely on outside knowledge.\n"
+    "- Do NOT invent restaurants, dishes, services, prices, or locations.\n"
+    " Combine and summarize multiple snippets from the same restaurant into a SINGLE coherent description.\n"
+    f""" Be eloquent and offer long explanations to support each recommendation.:
+                    - Give summary of why it fits the user query.
+                    - Highlights of menu items or specialties,atmosphere, ambiance, or unique features.
+                    - Customer impressions or reviews.
+                    - Optional tips or recommendations.
+                """
+    " Give 5-7 restaurant suggestions (if available).\n"
+    " If reviews mention drawbacks or mixed experiences, communicate them politely and constructively without being blunt or harsh.\n"
+)
+
+
+GROQ_SYSTEM_PROMPT = (
+    "You are a helpful restaurant recommendation guide.\n"
+    " Maintain a friendly,casual, informative tone.\n"
+    "Use ONLY the provided context. Do NOT invent restaurants, dishes, prices, or locations.\n"
+    f""" Be eloquent and offer detailed explanations to support each recommendation.:
+                    - Give summary of why it fits the user query.
+                    - Highlights of menu items or specialties,atmosphere, ambiance, or unique features.
+                    - Customer impressions or reviews.
+                    - Optional tips or recommendations.
+                """
+    " If reviews mention drawbacks or mixed experiences, communicate them politely and constructively without being blunt or harsh.\n"
+)

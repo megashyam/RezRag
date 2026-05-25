@@ -8,9 +8,9 @@ from tqdm import tqdm
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 
-from preprocessyelp import YelpRestaurantPipeline
-from yelpchunking import YelpChunking
-from embeddings import YelpEmbedder
+from preprocessor import YelpRestaurantPipeline
+from chunker import YelpChunking
+from embedder import YelpEmbedder
 
 # Import Config
 import config
@@ -35,6 +35,11 @@ logger = logging.getLogger(__name__)
 
 
 class YelpIngestorQdrant:
+    """
+    Pipeline for ingesting Yelp metadata and vector embeddings
+    into a Qdrant vector database.
+    """
+
     def __init__(self):
         self.client = QdrantClient(
             url=config.QDRANT_URL,
@@ -46,7 +51,10 @@ class YelpIngestorQdrant:
         self.cdf: pd.DataFrame = None
 
     def ensure_collection(self):
-        """Creates collection with optimized indexing settings."""
+        """
+        Creates the Qdrant collection with optimized indexing settings
+        if it does not exist, and sets up payload indexes for fast filtering.
+        """
         try:
             self.client.get_collection(config.COLLECTION_NAME)
             logger.info(f"Collection '{config.COLLECTION_NAME}' exists.")
@@ -73,7 +81,13 @@ class YelpIngestorQdrant:
             )
 
     def load_data(self):
-        """Loads vectors and metadata. Efficiently joins text chunks."""
+        """
+        Loads vectors and metadata. Efficiently joins text chunks.
+
+        Raises:
+            FileNotFoundError: If the preprocessed metadata or embeddings are missing.
+            ValueError: If there is a shape mismatch between the metadata dataframe and vector tensor.
+        """
         if not config.METADATA_PATH.exists() or not config.EMBEDDINGS_PATH.exists():
             raise FileNotFoundError(
                 "Processed data not found. Run the Retriever pipeline first."
@@ -90,7 +104,7 @@ class YelpIngestorQdrant:
         logger.info("Loading Vectors (Torch)...")
         # Load directly to CPU to save GPU memory for other tasks if needed,
         # or keep on GPU for fast normalization then move to CPU.
-        self.vectors = torch.load(config.EMBEDDINGS_PATH, map_location='cpu')
+        self.vectors = torch.load(config.EMBEDDINGS_PATH, map_location="cpu")
 
         if len(self.cdf) != self.vectors.shape[0]:
             raise ValueError(
@@ -101,6 +115,9 @@ class YelpIngestorQdrant:
         """
         Yields batches of points.
         Performs vector normalization and payload construction on the fly.
+
+        Returns:
+            Generator[List[models.PointStruct], None, None]: A generator yielding lists of Qdrant points.
         """
         total = len(self.cdf)
 
@@ -113,7 +130,6 @@ class YelpIngestorQdrant:
 
         # Convert to numpy for iteration (faster than torch indexing in loop)
         vector_np = normalized_vectors.numpy()
-
 
         # 2. Iterate in chunks
         for i in range(0, total, config.INGEST_BATCH_SIZE):
@@ -132,7 +148,7 @@ class YelpIngestorQdrant:
                 )
 
                 payload = row.to_dict()
-                #print(payload)
+                # print(payload)
                 payload["doc_id"] = config.DOC_ID
                 # Rename 'chunk' to 'text_content' if preferred, or keep as is
                 payload["text_content"] = payload.pop("chunk", "")
@@ -145,6 +161,13 @@ class YelpIngestorQdrant:
             yield points
 
     def run(self, clear_existing: bool = True):
+        """
+        Executes the ingestion pipeline to load data, ensure collections exist,
+        and upload generated batches to Qdrant.
+
+        Args:
+            clear_existing (bool): Whether to clear existing points for the current doc_id before uploading. Defaults to True.
+        """
         self.load_data()
         self.ensure_collection()
 

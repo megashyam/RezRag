@@ -13,16 +13,56 @@ The system is architected as a set of decoupled, asynchronous microservices to e
 
 ## Why From Scratch?
 
-To demonstrate a real understanding of everything that happens under the hood of RAG Frameworks. RezRag is built with full control and zero abstractions. No LangChain. No LlamaIndex. No RAG frameworks. Every component (hybrid search, BM25, RRF fusion, cross-encoder reranking, streaming microservices) is hand-rolled in Python. :
+To demonstrate a real understanding of everything that happens under the hood of RAG Frameworks. RezRag is built with full control and zero abstractions. No LangChain. No LlamaIndex. No RAG frameworks. This project starts from the raw Yelp Academic Dataset (~10GB, multi-file NDJSON)
+and processes it end-to-end with no managed loaders. Every component (hybrid search, BM25, RRF fusion, cross-encoder reranking, streaming microservices) is hand-rolled in Python. :
 
-| Component | Built With |
-| :--- | :--- |
-| Dense retrieval | `sentence-transformers` E5-large-v2 (1024-dim) |
-| Sparse retrieval | Custom BM25Okapi on retrieved candidates |
-| Fusion | Hand-rolled Reciprocal Rank Fusion (RRF) |
-| Reranking | CrossEncoder ms-marco-MiniLM-L-6-v2 |
-| Streaming | FastAPI `StreamingResponse` + NDJSON |
-| RAG Framework | **None** |
+
+### Streaming Filter Cascade (`preprocessor.py`)
+The review file contains millions of records. Loading it before filtering = 20GB RAM.
+Instead, three filters run at parse time ordered cheapest → most expensive:
+1. **Business ID** — O(1) set lookup. Kills 95% of records instantly.
+2. **Date filter** — lexicographic ISO string compare. Free.
+3. **Word count** — `text.split()` only runs on the survivors of (1) and (2).
+
+### Composite Restaurant Scoring (`preprocessor.py`)
+Raw star ratings are statistically broken for ranking — 3 reviews at 5★ outranks
+2000 reviews at 4.7★ naively. Built a two-component weighted score:
+- `restaurant_score = stars × log1p(review_count)` — long-term reputation signal
+- `reviews_score = mean_stars × log1p(sum_stars)` — recent review quality
+
+Both Min-Max normalized before combining with tunable coefficients.
+City caps are adaptive — dense cities (600+ restaurants) get higher limits than sparse ones.
+
+### Balanced Sentiment Sampling (`pipeline.py`)
+Naive top-N sampling produces all 5-star reviews. The LLM then has no context
+on wait times, portion sizes, or service issues. Reviews are sampled proportionally
+across positive/neutral/negative buckets with ceiling rounding to preserve rare
+sentiment classes.
+
+### Tiktoken-Bounded Chunking (`chunker.py`)
+Character-based splitting breaks semantic coherence mid-sentence. Token-budget
+arithmetic runs with a fast estimation path (`len(text) // 3`) that only falls
+back to the expensive `tiktoken.encode()` call when the estimate is borderline —
+avoiding unnecessary tokenizer overhead across 50k+ chunks.
+
+### Typed Chunk Structure (`chunker.py`)
+Chunks are not raw review dumps. Each restaurant produces structured chunk types:
+- **Business Profile** — name, location, category, hours
+- **Attribute chunks** — parsed from Yelp's nested stringified dicts (e.g. WiFi, parking, alcohol)
+- **Vibe chunks** — atmosphere descriptors extracted from nested attribute maps
+- **Positive / Neutral / Negative review batches** — sentiment-separated for retrieval precision
+
+This allows the retriever to surface different facets of the same restaurant
+depending on query intent — a "romantic atmosphere" query hits vibe chunks,
+a "avoid if in a rush" query hits negative review chunks.
+
+### Embedding Pipeline (`embedder.py`)
+E5-large-v2 (1024-dim) run over 50k+ chunks with:
+- `df.melt()` + `df.explode()` vectorized flattening — no nested Python loops
+- Fast estimation path avoids re-tokenizing on every iteration
+- `load_precomputed` flags on both embedding and BM25 steps — skip re-embedding
+  during iteration without changing any code
+- BM25 index serialized to disk alongside `.pt` tensors for instant reload
 
 ---
 
@@ -138,6 +178,14 @@ Retrieval is not a single step but a cascade of filters designed to maximize pre
 * **Model(Live Demo):** `Qwen/Qwen2.5-32B` via **Groq API**. Zero GPU cost, ~500ms TTFT
 
 ---
+
+## ⚡ Performance Optimizations Implemented
+
+1. **Parquet & PyTorch Formats:** Replaced standard CSV/JSON/Pickle intermediate files with **Parquet** (for metadata) and **.pt Tensors** (for vectors). 
+2. **Pandas Vectorization:** `chunker.py` used `df.explode()` and `df.melt()` instead of expensive `for` loops. This moves the iteration logic to C-level Pandas optimizations, speeding up processing.
+3. **Generator-Based Ingestion:** The `ingestor.py` does not load the full dataset into RAM. It lazily reads from the disk and yields batches to the Qdrant client, allowing the ingestion of datasets larger than system RAM.
+4. **Query cache** — diskcache (SQLite-backed) with 6-hour TTL; repeated queries skip retrieval entirely
+5. **Qdrant co-location** — database and compute in same cloud region eliminates cross-cloud latency (~200ms saved)
 
 ## 📂 Project Structure
 
@@ -379,11 +427,4 @@ Used to debug the search quality without waiting for the LLM generation.
 
 ---
 
-## ⚡ Performance Optimizations Implemented
-
-1. **Parquet & PyTorch Formats:** Replaced standard CSV/JSON/Pickle intermediate files with **Parquet** (for metadata) and **.pt Tensors** (for vectors). 
-2. **Pandas Vectorization:** `chunker.py` used `df.explode()` and `df.melt()` instead of expensive `for` loops. This moves the iteration logic to C-level Pandas optimizations, speeding up processing.
-3. **Generator-Based Ingestion:** The `ingestor.py` does not load the full dataset into RAM. It lazily reads from the disk and yields batches to the Qdrant client, allowing the ingestion of datasets larger than system RAM.
-4. **Query cache** — diskcache (SQLite-backed) with 6-hour TTL; repeated queries skip retrieval entirely
-5. **Qdrant co-location** — database and compute in same cloud region eliminates cross-cloud latency (~200ms saved)
 
