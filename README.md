@@ -1,4 +1,4 @@
-# RezRag: Production-Grade RAG System on the Yelp Business Review Dataset
+# RezRag: Production-Grade RAG System on the Yelp Business Review Dataset Entirely from Scratch
 
 **RezRag** is a high-performance Retrieval-Augmented Generation (RAG) system engineered to provide grounded, location-aware restaurant recommendations  **built entirely from scratch without LangChain, LlamaIndex, or any RAG framework.** It leverages a **Hybrid Search Architecture** (Dense Vectors + Sparse Keywords) fused with a Cross-Encoder Reranker to retrieve precise context from the Yelp Academic Dataset, which is then synthesized by a 4-bit quantized LLM.
 
