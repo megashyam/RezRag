@@ -179,6 +179,14 @@ Retrieval is not a single step but a cascade of filters designed to maximize pre
 
 ---
 
+## ⚡ Performance Optimizations Implemented
+
+1. **Parquet & PyTorch Formats:** Replaced standard CSV/JSON/Pickle intermediate files with **Parquet** (for metadata) and **.pt Tensors** (for vectors). 
+2. **Pandas Vectorization:** `chunker.py` used `df.explode()` and `df.melt()` instead of expensive `for` loops. This moves the iteration logic to C-level Pandas optimizations, speeding up processing.
+3. **Generator-Based Ingestion:** The `ingestor.py` does not load the full dataset into RAM. It lazily reads from the disk and yields batches to the Qdrant client, allowing the ingestion of datasets larger than system RAM.
+4. **Query cache** — diskcache (SQLite-backed) with 6-hour TTL; repeated queries skip retrieval entirely
+5. **Qdrant co-location** — database and compute in same cloud region eliminates cross-cloud latency (~200ms saved)
+
 ## 📂 Project Structure
 
 ```bash
@@ -419,11 +427,5 @@ Used to debug the search quality without waiting for the LLM generation.
 
 ---
 
-## ⚡ Performance Optimizations Implemented
 
-1. **Parquet & PyTorch Formats:** Replaced standard CSV/JSON/Pickle intermediate files with **Parquet** (for metadata) and **.pt Tensors** (for vectors). 
-2. **Pandas Vectorization:** `chunker.py` used `df.explode()` and `df.melt()` instead of expensive `for` loops. This moves the iteration logic to C-level Pandas optimizations, speeding up processing.
-3. **Generator-Based Ingestion:** The `ingestor.py` does not load the full dataset into RAM. It lazily reads from the disk and yields batches to the Qdrant client, allowing the ingestion of datasets larger than system RAM.
-4. **Query cache** — diskcache (SQLite-backed) with 6-hour TTL; repeated queries skip retrieval entirely
-5. **Qdrant co-location** — database and compute in same cloud region eliminates cross-cloud latency (~200ms saved)
 
