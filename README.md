@@ -29,8 +29,8 @@ To demonstrate a real understanding of everything that happens under the hood of
 ## Data Pipeline — From Raw Yelp JSON to Production Vector DB
 
 The entire data pipeline is hand-built from the raw 
-[Yelp Academic Dataset](https://www.yelp.com/dataset) — ~10GB across multiple 
-JSON files — with no managed loaders, pre-processed datasets, or data APIs.
+[Yelp Academic Dataset](https://www.yelp.com/dataset) ~10GB across multiple 
+JSON files with no managed loaders, pre-processed datasets, or data APIs.
 
 ### Challenges solved:
 
