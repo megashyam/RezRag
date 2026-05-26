@@ -187,6 +187,21 @@ Retrieval is not a single step but a cascade of filters designed to maximize pre
 4. **Query cache** — diskcache (SQLite-backed) with 6-hour TTL; repeated queries skip retrieval entirely
 5. **Qdrant co-location** — database and compute in same cloud region eliminates cross-cloud latency (~200ms saved)
 
+### Observed Performance (Deployed, Warm, Zero infrastructure cost)
+
+| Step | Latency |
+| :--- | :--- |
+| E5 embedding | ~200ms |
+| Qdrant vector search | ~400ms |
+| BM25 + RRF | ~5ms |
+| CrossEncoder rerank (8 docs) | ~150ms |
+| **Total retrieval** | **~700ms–1.2s** |
+| Groq LLM (streaming) | ~1–3s TTFT |
+| **End-to-end (warm)** | **~2–4s** |
+
+> Variance in retrieval time (0.7s–1.1s) caused by Qdrant free tier
+
+
 ## 📂 Project Structure
 
 ```bash
