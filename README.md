@@ -191,15 +191,17 @@ Retrieval is not a single step but a cascade of filters designed to maximize pre
 
 | Step | Latency |
 | :--- | :--- |
-| E5 embedding | ~200ms |
-| Qdrant vector search | ~400ms |
+| E5 embedding (CPU)| ~200-600ms |
+| Qdrant vector search | ~133-500ms |
 | BM25 + RRF | ~5ms |
-| CrossEncoder rerank (8 docs) | ~150ms |
+| CrossEncoder rerank (8 docs) | ~200ms |
 | **Total retrieval** | **~700ms–1.2s** |
 | Groq LLM (streaming) | ~1–3s TTFT |
 | **End-to-end (warm)** | **~2–4s** |
 
-> Variance in retrieval time (0.7s–1.1s) caused by Qdrant free tier
+> Variance is inherent to free-tier serverless infrastructure
+> Qdrant free cluster has variable wake latency, E5 runs on shared CPU.
+> A paid Qdrant cluster + dedicated CPU would bring retrieval under 400ms consistently.
 
 
 ## 📂 Project Structure
