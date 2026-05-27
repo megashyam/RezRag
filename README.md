@@ -203,6 +203,22 @@ Retrieval is not a single step but a cascade of filters designed to maximize pre
 > Qdrant free cluster has variable wake latency, E5 runs on shared CPU.
 > A paid Qdrant cluster + dedicated CPU would bring retrieval under 400ms consistently.
 
+ 
+## Retrieval Quality Evaluation
+ 
+Evaluated across 25 queries with **labeled relevance judgments**. Eval script: `eval_strict.py`.
+ 
+| Strategy | MRR@5 | Hit@3 | Hit@5 | P@5 |
+| :--- | :--- | :--- | :--- | :--- |
+| **Hybrid + Rerank** | **0.861** | **0.960** | **1.000** | **0.833** |
+| Hybrid (no rerank) | 0.841 | 0.960 | 1.000 | 0.737 |
+ 
+**Key findings:**
+- Reranking improves P@5 by **+9.6%** — more relevant results in the top 5
+- Hit@5 of **1.000** — every query returns at least one relevant result in top 5
+- MRR@5 of **0.861** — the best result appears at position ~1.16 on average
+- Two generators: live demo uses Groq (Qwen 2.5 32B), local version runs Qwen 2.5 3B with 4-bit NF4 quantization via bitsandbytes + HuggingFace Transformers + PyTorch
+---
 
 ## 📂 Project Structure
 
