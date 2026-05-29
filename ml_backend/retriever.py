@@ -27,7 +27,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models
 
 
-from observability import (
+from ml_backend.observability import (
     setup_logging,
     attach_prometheus,
     Timer,
@@ -36,7 +36,7 @@ from observability import (
     RESULTS_HISTOGRAM,
     RERANK_IMPROVEMENT,
 )
-from cache import get_cached, set_cached, cache_stats, evict_all
+from ml_backend.cache import get_cached, set_cached, cache_stats, evict_all
 from loguru import logger
 
 load_dotenv()

@@ -32,7 +32,7 @@ import config
 _gen_lock = asyncio.Semaphore(1)
 
 
-from observability import (
+from ml_backend.observability import (
     setup_logging,
     attach_prometheus,
     Timer,

@@ -87,6 +87,6 @@ def serve():
 
     os.environ["CACHE_DIR"] = "/cache"
 
-    from retriever import app
+    from ml_backend.retriever import app
 
     return app

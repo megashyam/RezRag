@@ -33,6 +33,6 @@ def serve():
 
     sys.path.insert(0, "/app")
 
-    from generator import app
+    from ml_backend.generator import app
 
     return app
