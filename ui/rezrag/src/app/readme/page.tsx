@@ -5,8 +5,7 @@ import ReactMarkdown from "react-markdown";
 import Link from "next/link";
 import { ArrowLeft, Eye, Code, Github, RefreshCw, AlertCircle } from "lucide-react";
 
-// Set NEXT_PUBLIC_README_URL in your .env.local
-// e.g. https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main/README.md
+
 const README_URL =
     process.env.NEXT_PUBLIC_README_URL ||
     "https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main/README.md";

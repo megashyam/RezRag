@@ -5,6 +5,8 @@ export const dynamic = "force-dynamic";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+    const city = req.headers.get("x-vercel-ip-city") || "unknown";
+    const country = req.headers.get("x-vercel-ip-country") || "unknown";
 
     // Ensure this matches your Python Generator's port (defaulted to 8001 in my previous snippet)
     // If you are running locally, it might be http://localhost:8001/generate
@@ -53,4 +55,13 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+export async function GET(req: NextRequest) {
+  return NextResponse.json({
+    city: req.headers.get("x-vercel-ip-city"),
+    region: req.headers.get("x-vercel-ip-country-region"),
+    country: req.headers.get("x-vercel-ip-country"),
+    ip: req.headers.get("x-forwarded-for"),
+  });
 }

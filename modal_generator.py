@@ -24,7 +24,6 @@ app = modal.App("food-rag-generator", image=image)
 @app.function(
     secrets=[modal.Secret.from_name("food-rag-secrets")],
     cpu=1.0,
-    memory=500,
     timeout=120,
     scaledown_window=300,
 )

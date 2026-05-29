@@ -2,16 +2,16 @@
 
 import { createContext, useContext, useEffect, useState } from "react";
 
-type Theme = "dark" | "light";
+type Theme = "light" | "dark";
 type Ctx = { theme: Theme; toggle: () => void };
 
-const ThemeContext = createContext<Ctx>({ theme: "dark", toggle: () => { } });
+const ThemeContext = createContext<Ctx>({ theme: "light", toggle: () => { } });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-    const [theme, setTheme] = useState<Theme>("dark");
+    const [theme, setTheme] = useState<Theme>("light");
 
     useEffect(() => {
-        const saved = (localStorage.getItem("fg-theme") as Theme) ?? "dark";
+        const saved = (localStorage.getItem("fg-theme") as Theme) ?? "light";
         apply(saved);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -23,7 +23,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     }
 
     return (
-        <ThemeContext.Provider value={{ theme, toggle: () => apply(theme === "dark" ? "light" : "dark") }}>
+        <ThemeContext.Provider value={{ theme, toggle: () => apply(theme === "light" ? "dark" : "light") }}>
             {children}
         </ThemeContext.Provider>
     );

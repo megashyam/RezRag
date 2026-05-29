@@ -11,12 +11,21 @@ import diskcache as dc
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = os.getenv("CACHE_DIR", "./data/query_cache")
-CACHE_TTL = int(os.getenv("CACHE_TTL_SECONDS", str(6 * 60 * 60)))  # 6 h default
+CACHE_TTL = int(os.getenv("CACHE_TTL_SECONDS", str(6 * 60)))
 CACHE_SIZE_LIMIT = int(os.getenv("CACHE_SIZE_BYTES", str(2 * 10**9)))  # 2 GB
 
-# Single module-level cache instance — diskcache is process-safe via file locks
-_cache = dc.Cache(CACHE_DIR, size_limit=CACHE_SIZE_LIMIT)
+_cache: dc.Cache | None = None
+
+
+def get_cache() -> dc.Cache:
+    """Returns the cache instance, initializing it on first call."""
+    global _cache
+    if _cache is None:
+        cache_dir = os.getenv("CACHE_DIR", "./data/query_cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        _cache = dc.Cache(cache_dir, size_limit=CACHE_SIZE_LIMIT)
+        logger.info(f"[CACHE] Initialized at {cache_dir}")
+    return _cache
 
 
 def _key(query: str, top_k: int, do_rerank: bool) -> str:
@@ -25,31 +34,33 @@ def _key(query: str, top_k: int, do_rerank: bool) -> str:
 
 
 def get_cached(query: str, top_k: int, do_rerank: bool):
-    hit = _cache.get(_key(query, top_k, do_rerank))
+    hit = get_cache().get(_key(query, top_k, do_rerank))
     if hit is not None:
         logger.info(f"[CACHE HIT]  '{query[:60]}'")
     return hit
 
 
 def set_cached(query: str, top_k: int, do_rerank: bool, results: list) -> None:
-    _cache.set(_key(query, top_k, do_rerank), results, expire=CACHE_TTL)
+    get_cache().set(_key(query, top_k, do_rerank), results, expire=CACHE_TTL)
     logger.debug(
         f"[CACHE SET]  '{query[:60]}'  ({len(results)} results, ttl={CACHE_TTL}s)"
     )
 
 
 def cache_stats() -> dict:
+    c = get_cache()
     return {
-        "entries": len(_cache),
-        "volume_bytes": _cache.volume(),
+        "entries": len(c),
+        "volume_bytes": c.volume(),
         "size_limit": CACHE_SIZE_LIMIT,
-        "directory": CACHE_DIR,
+        "directory": os.getenv("CACHE_DIR", "./data/query_cache"),
         "ttl_seconds": CACHE_TTL,
     }
 
 
 def evict_all() -> int:
-    n = len(_cache)
-    _cache.clear()
+    c = get_cache()
+    n = len(c)
+    c.clear()
     logger.warning(f"[CACHE] Cleared {n} entries.")
     return n

@@ -1,4 +1,5 @@
 import gc
+import re
 from threading import Thread
 import logging
 import os
@@ -365,8 +366,6 @@ async def lifespan(app: FastAPI):
     logger.info("--- Shutting Down Generator Service ---")
     del gen_state["generator"]
     gc.collect()
-    # if torch.cuda.is_available():
-    #     torch.cuda.empty_cache()
 
 
 app = FastAPI(title="RAG Generator API", lifespan=lifespan)
@@ -395,6 +394,27 @@ class GenerateRequest(BaseModel):
 
 
 # --- Helper Functions ---
+
+
+def is_non_food_query(query: str) -> bool:
+    """Determines if a query is likely non-food related based on regex patterns."""
+    q = query.strip().lower()
+    return any(re.search(p, q) for p in config.NON_FOOD_PATTERNS)
+
+
+def is_out_of_coverage(query: str) -> bool:
+    """checks if the query mentions any covered areas first, then checks for out of coverage cities."""
+    q = query.lower()
+    if any(
+        re.search(r"\b" + re.escape(area) + r"\b", q) for area in config.COVERED_AREAS
+    ):
+        return False
+
+    return any(
+        re.search(r"\b" + re.escape(city) + r"\b", q) for city in config.OUT_OF_COVERAGE
+    )
+
+
 def fetch_context(query: str, top_k: int) -> List[Dict[str, Any]]:
     """
     Calls the separate Retriever Microservice to fetch relevant data.
@@ -429,7 +449,6 @@ def fetch_context(query: str, top_k: int) -> List[Dict[str, Any]]:
     except requests.exceptions.RequestException as e:
         print(f"[API] Retrieval Error: {e}")
 
-        # Return empty list allows the LLM to say "I don't know" gracefully
         return [], 0
 
 
@@ -476,6 +495,100 @@ async def generate_endpoint(req: GenerateRequest):
         full_query = req.query
         if req.city:
             full_query += f" in {req.city}"
+
+        # ── Skip retrieval for non-food queries ────────────────────────────────────
+        if is_non_food_query(req.query):
+
+            def greeting_stream():
+                yield json.dumps(
+                    {
+                        "type": "meta",
+                        "data": {
+                            "retrieval_ms": 0,
+                            "results_count": 0,
+                            "reranked": False,
+                        },
+                    }
+                ) + "\n"
+                yield json.dumps({"type": "sources", "data": []}) + "\n"
+                yield json.dumps(
+                    {
+                        "type": "token",
+                        "data": (
+                            "Hi! I'm RezRag, a restaurant recommendation assistant powered by real Yelp reviews 🍽️\n\n"
+                            "Try asking:\n"
+                            "- *Best tacos in Philadelphia*\n"
+                            "- *Romantic Italian dinner in Nashville*\n"
+                            "- *Late night ramen in Tampa*\n"
+                            "- *Casual Indian restaurant in Pennsylvania*\n\n"
+                            "I cover cities across: \n"
+                            "📍 **Pennsylvania** — Philadelphia, King of Prussia, Norristown, Doylestown (PA)\n"
+                            "📍 **California** — Santa Barbara, Goleta, Montecito, Carpinteria (CA)\n"
+                            "📍 **New Jersey** — Cherry Hill, Camden, Voorhees, Haddonfield (NJ)\n"
+                            "📍 **Florida** — Tampa, Clearwater, St. Petersburg, Brandon (FL)\n"
+                            "📍 **Tennessee** — Nashville, Brentwood, Franklin, Hendersonville (TN)\n"
+                            "📍 **Louisiana** — New Orleans, Metairie, Kenner, Chalmette (LA)\n"
+                            "📍 **Indiana** — Indianapolis, Carmel, Fishers, Noblesville (IN)\n"
+                            "📍 **Arizona** — Tucson, Oro Valley, Marana, Sahuarita (AZ)\n"
+                            "📍 **Nevada** — Reno (NV)\n"
+                            "📍 **Idaho** — Boise, Meridian, Eagle (ID)\n"
+                            "📍 **Illinois** — Belleville, Collinsville, Mascoutah, Caseyville (IL)\n"
+                            "📍 **Missouri** — Saint Louis, Chesterfield, Ballwin, Creve Coeur (MO)\n"
+                            "📍 **Delaware** — Wilmington, Claymont, Christiana (DE)\n"
+                            "📍 **Alberta** — Edmonton (AB)\n"
+                        ),
+                    }
+                ) + "\n" + "\n"
+
+            return StreamingResponse(
+                greeting_stream(),
+                media_type="application/x-ndjson",
+                headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+            )
+
+        if is_out_of_coverage(req.query):
+
+            def coverage_stream():
+                yield json.dumps(
+                    {
+                        "type": "meta",
+                        "data": {
+                            "retrieval_ms": 0,
+                            "results_count": 0,
+                            "reranked": False,
+                        },
+                    }
+                ) + "\n"
+                yield json.dumps({"type": "sources", "data": []}) + "\n"
+                yield json.dumps(
+                    {
+                        "type": "token",
+                        "data": (
+                            "     'That location isn't covered in the Yelp dataset. I currently cover cities from:\n\n"
+                            "📍 **Pennsylvania** — Philadelphia, King of Prussia, Norristown, Doylestown (PA)\n"
+                            "📍 **California** — Santa Barbara, Goleta, Montecito, Carpinteria (CA)\n"
+                            "📍 **New Jersey** — Cherry Hill, Camden, Voorhees, Haddonfield (NJ)\n"
+                            "📍 **Florida** — Tampa, Clearwater, St. Petersburg, Brandon (FL)\n"
+                            "📍 **Tennessee** — Nashville, Brentwood, Franklin, Hendersonville (TN)\n"
+                            "📍 **Louisiana** — New Orleans, Metairie, Kenner, Chalmette (LA)\n"
+                            "📍 **Indiana** — Indianapolis, Carmel, Fishers, Noblesville (IN)\n"
+                            "📍 **Arizona** — Tucson, Oro Valley, Marana, Sahuarita (AZ)\n"
+                            "📍 **Nevada** — Reno (NV)\n"
+                            "📍 **Idaho** — Boise, Meridian, Eagle (ID)\n"
+                            "📍 **Illinois** — Belleville, Collinsville, Mascoutah, Caseyville (IL)\n"
+                            "📍 **Missouri** — Saint Louis, Chesterfield, Ballwin, Creve Coeur (MO)\n"
+                            "📍 **Delaware** — Wilmington, Claymont, Christiana (DE)\n"
+                            "📍 **Alberta** — Edmonton (AB)\n"
+                            "Try: *best tacos in Philadelphia* or *late night food in Nashville* 🍜"
+                        ),
+                    }
+                ) + "\n"
+
+            return StreamingResponse(
+                coverage_stream(),
+                media_type="application/x-ndjson",
+                headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+            )
 
         # 2. Retrieve Context
         with Timer("generator", "context_fetch"):

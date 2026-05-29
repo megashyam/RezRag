@@ -23,25 +23,31 @@ image = (
         extra_index_url="https://download.pytorch.org/whl/cpu",
     )
     .run_commands("python -m spacy download en_core_web_sm")
-    # Embed your source files into the image at build time
     .add_local_file("retriever.py", "/app/retriever.py")
     .add_local_file("cache.py", "/app/cache.py")
     .add_local_file("observability.py", "/app/observability.py")
     .add_local_file("config.py", "/app/config.py")
 )
 
+
 model_vol = modal.Volume.from_name("food-rag-model-cache", create_if_missing=True)
 cache_vol = modal.Volume.from_name("food-rag-query-cache", create_if_missing=True)
+
 
 app = modal.App("food-rag-retriever", image=image)
 
 
 @app.function(
     volumes={"/model-cache": model_vol},
-    timeout=600,  # 10 min — E5 is 1.2GB, slow on first download
+    timeout=600,
 )
 def download_models():
-
+    """
+    Pre-downloads E5 + CrossEncoder into the persistent Volume.
+    Run this ONCE before deploying:
+        modal run modal_retriever.py::download_models
+    After this, cold starts load from the volume (~5-10s) not the internet.
+    """
     import os
 
     os.environ["HF_HOME"] = "/model-cache"
@@ -66,8 +72,8 @@ def download_models():
     },
     secrets=[modal.Secret.from_name("food-rag-secrets")],
     cpu=2.0,
-    memory=2000,  # 3GB — E5(1.2GB) + CrossEncoder + overhead
-    timeout=120,  # per-request timeout
+    memory=2000,
+    timeout=120,
     scaledown_window=500,
 )
 @modal.asgi_app()
@@ -77,9 +83,8 @@ def serve():
 
     sys.path.insert(0, "/app")
 
-    # Point HuggingFace at the persistent volume
     os.environ["HF_HOME"] = "/model-cache"
-    # Point diskcache at the persistent volume
+
     os.environ["CACHE_DIR"] = "/cache"
 
     from retriever import app

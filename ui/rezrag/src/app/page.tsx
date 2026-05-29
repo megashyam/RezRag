@@ -24,6 +24,10 @@ const MapPanel = dynamic(() => import("@/components/MapPanel"), {
   ),
 });
 
+declare global {
+  interface Window { gtag: Function; }
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────
 type Source = {
   name?: string;
@@ -64,11 +68,12 @@ function extractMentionedSources(text: string, pool: Source[]): Source[] {
 
 // ── Component ──────────────────────────────────────────────────────────────
 export default function Home() {
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeSources, setActiveSources] = useState<Source[]>([]);
   const [busy, setBusy] = useState(false);
-  const [topK, setTopK] = useState(5);
+  const [topK, setTopK] = useState(4);
   const [showMap, setShowMap] = useState(false);
   const [serviceStatus, setServiceStatus] = useState<{
     retriever: "checking" | "warm" | "cold";
@@ -79,6 +84,7 @@ export default function Home() {
   const allSourcesRef = useRef<Source[]>([]);
   const [currentMeta, setCurrentMeta] = useState<QueryMeta | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [showPerf, setShowPerf] = useState(false);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -93,6 +99,20 @@ export default function Home() {
   }, [input]);
 
   useEffect(() => {
+    fetch("/api/geo")
+      .then(r => r.json())
+      .then(geo => {
+        if (typeof window !== "undefined" && window.gtag) {
+          window.gtag("event", "user_visit", {
+            city: geo.city,
+            region: geo.region,
+            country: geo.country,
+          });
+        }
+      });
+  }, []);
+
+  useEffect(() => {
     const RETRIEVER_URL = process.env.NEXT_PUBLIC_RETRIEVER_URL;
 
     const check = async (url: string) => {
@@ -104,6 +124,8 @@ export default function Home() {
         return "cold";
       }
     };
+
+
 
     let interval: NodeJS.Timeout;
 
@@ -137,9 +159,14 @@ export default function Home() {
     };
   }, []);
   async function send(queryOverride?: string) {
-    const textToSend = queryOverride || input;
 
+    const textToSend = queryOverride || input;
     if (!textToSend.trim() || busy) return;
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
 
     setMessages((prev) => [...prev, { role: "user", content: textToSend }]);
     setBusy(true);
@@ -148,16 +175,18 @@ export default function Home() {
     allSourcesRef.current = [];
     setCurrentMeta(null);
     setShowMap(false);
-
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+
     let assistantText = "";
     let updatePending = false;
     console.log("GENERATOR_URL:", process.env.NEXT_PUBLIC_GENERATOR_URL);
+
     try {
       const res = await fetch(`${GENERATOR_URL}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: textToSend, city: null, top_k: topK }),
+        body: JSON.stringify({ query: textToSend, city: null, top_k: topK, }),
+        signal: abortControllerRef.current.signal,
       });
 
       if (!res.ok || !res.body) throw new Error(`Server error: ${res.status}`);
@@ -228,20 +257,35 @@ export default function Home() {
         }
       }
     } catch (err) {
+
+      if ((err as Error).name === "AbortError") {
+        setMessages((prev) => {
+          const copy = [...prev];
+          const last = copy.length - 1;
+          if (copy[last].role === "assistant" && copy[last].content === "") {
+            copy[last] = { ...copy[last], content: "_Response stopped._" };
+          }
+          return copy;
+        });
+        setBusy(false);
+        return;
+      }
       console.error("[fetch error]", err);
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: "❌ Could not connect to the food guide API." },
       ]);
     } finally {
-      setMessages((prev) => {
-        const copy = [...prev];
-        const last = copy.length - 1;
-        if (copy[last].role === "assistant") {
-          copy[last] = { ...copy[last], content: assistantText };
-        }
-        return copy;
-      });
+      if (assistantText) {
+        setMessages((prev) => {
+          const copy = [...prev];
+          const last = copy.length - 1;
+          if (copy[last].role === "assistant") {
+            copy[last] = { ...copy[last], content: assistantText };
+          }
+          return copy;
+        });
+      }
       setBusy(false);
     }
   }
@@ -290,23 +334,9 @@ export default function Home() {
           built entirely from scratch without LangChain, LlamaIndex, or any RAG framework.
         </p>
 
-        {/* Cold start note */}
-        <div style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 3,
-          padding: "3px 10px",
-          borderRadius: 8,
-          // background: "rgba(232,96,38,0.08)",
-          // border: "rgba(232,96,38,0.08)",
-          fontSize: 10,
-          color: "var(--text-3)",
-          marginBottom: 20,
-          fontStyle: "italic",
-        }}>
-          {/* <span>ℹ️</span> */}
-          <span>First request may time (serverless cold start). Subsequent queries are instant.</span>
-        </div>
+
+
+
 
         {/* Feature pills */}
         <div className="fade-up-3" style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 8, marginBottom: 36 }}>
@@ -322,6 +352,31 @@ export default function Home() {
             </div>
           ))}
         </div>
+
+        {/* Coverage note */}
+        <div style={{
+          margin: "0 auto 28px",
+          padding: "10px 16px",
+          borderRadius: 10,
+          // background: "var(--bg-2)",
+          // border: "1px solid var(--border)",
+          fontSize: 11,
+          color: "var(--text-3)",
+          textAlign: "center",
+          lineHeight: 1.8,
+          maxWidth: 480,
+          marginLeft: "auto",
+          marginRight: "auto",
+        }}>
+          <span style={{ fontWeight: 600, color: "var(--text-2)" }}>📍 Coverage</span>
+          {" · "}
+          Philadelphia · Nashville · Tampa · New Orleans · Indianapolis · Tucson · Reno · Boise · Santa Barbara · Edmonton
+          <br />
+          <span style={{ fontSize: 10, fontStyle: "italic" }}>
+            + surrounding suburbs across PA, NJ, FL, TN, LA, IN, AZ, NV, ID, CA & Alberta
+          </span>
+        </div>
+
 
         {/* Pipeline showcase */}
         <div className="fade-up-3" style={{
@@ -370,7 +425,59 @@ export default function Home() {
           </div>
         </div>
 
+        {/* Performance optimizations — collapsible */}
+        <div style={{ width: "100%", maxWidth: 480, margin: "0 auto 28px" }}>
+          <button
+            onClick={() => setShowPerf(v => !v)}
+            style={{
+              width: "100%",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "10px 16px", borderRadius: showPerf ? "12px 12px 0 0" : 12,
+              background: "var(--bg-2)", border: "1px solid var(--border)",
+              color: "var(--text-2)", fontSize: 12, fontWeight: 700,
+              cursor: "pointer", transition: "all 0.2s",
+              letterSpacing: "0.06em", textTransform: "uppercase",
+            }}
+          >
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ color: "#e86026" }}>⚡</span>
+              Performance Optimizations
+            </span>
+            <span style={{ fontSize: 16, color: "var(--text-3)", transition: "transform 0.2s", transform: showPerf ? "rotate(180deg)" : "rotate(0deg)" }}>
+              ›
+            </span>
+          </button>
 
+          {showPerf && (
+            <div style={{
+              background: "var(--bg-2)", border: "1px solid var(--border)",
+              borderTop: "none", borderRadius: "0 0 12px 12px",
+              padding: "12px 16px", display: "flex", flexDirection: "column", gap: 6,
+            }}>
+              {[
+                { layer: "Data", items: ["orjson 3–5× faster than stdlib json", "Filter cascade: O(1) set → date string → word count", "df.melt() + df.explode() — C-level vectorization", "Generator-based Qdrant ingestion — flat RAM"] },
+                { layer: "Chunking", items: ["len(text)//3 fast token estimation", "tiktoken.encode() only on borderline chunks", "Single-pass progress_apply — no intermediate DataFrames"] },
+                { layer: "Retrieval", items: ["INITIAL_K=8 — CrossEncoder rerank time ↓70%", "400-char doc truncation — quadratic attention cost", "BM25 on candidate subset only, not full corpus", "spaCy NER geo-filter cuts Qdrant search space"] },
+                { layer: "Deployment", items: ["Modal Volume — models cached, not re-downloaded", "keep_warm=1 — one container always hot", "Qdrant co-located in same GCP region as Modal", "6-hour query cache — repeated queries skip retrieval"] },
+                { layer: "Frontend", items: ["setTimeout(fn,30) — token updates batched to ~60fps", "Leaflet lazy-loaded (ssr:false) — no SSR crash", "Health check via API route — no CORS on Modal calls"] },
+              ].map(({ layer, items }) => (
+                <div key={layer}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: "#e86026", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>
+                    {layer}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                    {items.map(item => (
+                      <div key={item} style={{ display: "flex", alignItems: "flex-start", gap: 6, fontSize: 11, color: "var(--text-2)" }}>
+                        <span style={{ color: "var(--text-3)", marginTop: 1, flexShrink: 0 }}>·</span>
+                        <span>{item}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         {/* Query chips */}
         <div className="fade-up-4" style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 10 }}>
           {[
@@ -412,7 +519,6 @@ export default function Home() {
             </button>
           ))}
         </div>
-
 
       </div>
     </div>
@@ -546,6 +652,32 @@ export default function Home() {
                 <ArrowRight style={{ width: 16, height: 16 }} />
               )}
             </button>
+
+            {busy && (
+              <button
+                onClick={() => {
+                  abortControllerRef.current?.abort();
+                  setBusy(false);
+                  setMessages((prev) => {
+                    const copy = [...prev];
+                    const last = copy.length - 1;
+                    if (copy[last].role === "assistant" && copy[last].content === "") {
+                      copy[last] = { ...copy[last], content: "_Response stopped._" };
+                    }
+                    return copy;
+                  });
+                }}
+                style={{
+                  width: 36, height: 36, borderRadius: 10,
+                  background: "var(--bg-3)", border: "1px solid var(--border)",
+                  color: "var(--text-2)", cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  flexShrink: 0, transition: "all 0.2s",
+                }}
+              >
+                <span style={{ width: 12, height: 12, background: "currentColor", borderRadius: 2, display: "inline-block" }} />
+              </button>
+            )}
           </div>
 
           {/* Controls row */}
@@ -662,7 +794,7 @@ export default function Home() {
               transition: "flex 0.4s ease",
             }}
           >
-            <div style={{ flex: 1, overflowY: "auto", padding: "8x 4px", display: "flex", flexDirection: "column", gap: 20 }}>
+            <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px", display: "flex", flexDirection: "column", gap: 20 }}>
               {messages.map((msg, idx) => (
                 <div
                   key={idx}
@@ -759,6 +891,8 @@ export default function Home() {
                   </div>
                   <button
                     onClick={() => setShowMap(false)}
+
+
                     style={{
                       position: "absolute", top: 12, right: 12, zIndex: 1000,
                       width: 36, height: 36, borderRadius: "50%",

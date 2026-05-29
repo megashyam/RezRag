@@ -210,7 +210,7 @@ class HybridRetriever:
                     key="city", match=models.MatchValue(value=city.lower())
                 )
             )
-        if state:
+        if state and not city:
             conditions.append(
                 models.FieldCondition(key="state", match=models.MatchValue(value=state))
             )
@@ -235,10 +235,8 @@ class HybridRetriever:
                 t2 = time.perf_counter()
             except Exception as e:
                 logger.error(f"Qdrant Query Failed: {e}")
-            # return []
+
         logger.info(f"Qdrant returned {len(points)} points.")
-        # if not points:
-        #     return []
 
         # C. Prepare Data for Fusion
         chunks = [
@@ -463,7 +461,9 @@ def retrieve_endpoint(req: RetrieveRequest):
     RESULTS_HISTOGRAM.observe(len(results))
     QUERY_COUNTER.labels("retriever", "success").inc()
 
-    set_cached(req.query, req.top_k, req.do_rerank, results)
+    if results:
+        set_cached(req.query, req.top_k, req.do_rerank, results)
+
     logger.info(f"Retrieved {(len(results))} for query: '{req.query}'")
 
     return {"results": results, "retrieval_ms": retrieval_ms}
@@ -480,16 +480,16 @@ def cache_stats_endpoint():
     return cache_stats()
 
 
-@app.delete("/cache")
-def clear_cache_endpoint():
+@app.post("/cache/clear")
+def clear_cache_():
     """
     Clears all items currently held in the retrieval cache.
 
     Returns:
-        Dict: Number of items cleared.
+        Dict: A status message confirming cache clearance.
     """
-    n = evict_all()
-    return {"cleared": n}
+    evict_all()
+    return {"status": "cache cleared"}
 
 
 if __name__ == "__main__":
