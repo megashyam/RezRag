@@ -8,9 +8,9 @@ from tqdm import tqdm
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 
-from pipeline.preprocessor import YelpRestaurantPipeline
-from pipeline.chunker import YelpChunking
-from pipeline.embedder import YelpEmbedder
+from data_pipeline.preprocessor import YelpRestaurantPipeline
+from data_pipeline.chunker import YelpChunking
+from data_pipeline.embedder import YelpEmbedder
 
 # Import Config
 import config
