@@ -132,8 +132,7 @@ Key deployment decisions:
 A new Next.js frontend replaces the original chat interface, deployed on Vercel
 
 ### Retrieval Optimizations
-- Reduced `INITIAL_K` from 50 → 8 (reranking fewer candidates cuts reranker time from ~2.4s → ~400ms)
-- CrossEncoder truncates documents to 400 chars before reranking (attention scales quadratically)
+- Reranking disabled — CrossEncoder domain mismatch with restaurant queries costs +880ms for negligible MRR gain
 - Qdrant cluster co-located in same cloud region as Modal deployment (GCP `us-east4`) to eliminate cross-cloud latency
 - Query result cache (diskcache / SQLite) with 6-hour TTL — repeated queries return instantly
 
@@ -205,20 +204,20 @@ Retrieval is not a single step but a cascade of filters designed to maximize pre
 
  
 ## Retrieval Quality Evaluation
- 
-Evaluated across 25 queries with **labeled relevance judgments**. Eval script: `eval_strict.py`.
- 
-| Strategy | MRR@5 | Hit@3 | Hit@5 | P@5 |
-| :--- | :--- | :--- | :--- | :--- |
-| **Hybrid + Rerank** | **0.861** | **0.960** | **1.000** | **0.833** |
-| Hybrid (no rerank) | 0.841 | 0.960 | 1.000 | 0.737 |
- 
+
+Evaluated across **47 queries spanning all 12 dataset cities** with human-labeled relevance judgments and fuzzy name matching. Eval script: `eval.py`.
+
+| Strategy | MRR@5 | 95% CI | Hit@5 | P@5 | Avg Latency |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Hybrid (no rerank)** | **0.797** | **[0.703, 0.881]** | **0.979** | **0.380** | **686ms** |
+| Hybrid + Rerank | 0.794 | [0.699, 0.878] | 0.979 | 0.333 | 1566ms |
+
 **Key findings:**
-- Reranking improves P@5 by **+9.6%** — more relevant results in the top 5
-- Hit@5 of **1.000** — every query returns at least one relevant result in top 5
-- MRR@5 of **0.861** — the best result appears at position ~1.16 on average
-- Two generators: live demo uses Groq (Qwen 2.5 32B), local version runs Qwen 2.5 3B with 4-bit NF4 quantization via bitsandbytes + HuggingFace Transformers + PyTorch
----
+- Reranking disabled, MRR difference is negligible (+0.003) but latency cost is +880ms (+128%)
+- The CrossEncoder (`ms-marco-MiniLM-L-6-v2`) was trained on web Q&A (MS MARCO) it scores "does this passage answer the query," which doesn't generalise to vibe-based restaurant queries like "romantic dinner" or "best hot chicken"
+- Hit@5 of **0.979** — 46 of 47 queries return at least one relevant result in top 5
+- MRR@5 of **0.797** — first relevant result appears at position ~1.25 on average
+- Location accuracy: **96.7%** — city filter fires correctly across all 12 cities
 
 ## 📂 Project Structure
 
