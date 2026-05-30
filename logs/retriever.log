@@ -1,0 +1,4 @@
+2026-05-28 23:39:26.107 | INFO     | observability:setup_logging:99 | [retriever] logger ready
+2026-05-28 23:39:26.107 | INFO     | __main__:initialize:71 | Initializing Hybrid Retriever on cuda...
+2026-05-28 23:39:30.451 | ERROR    | __main__:initialize:88 | Qdrant Connection Failed: [WinError 10061] No connection could be made because the target machine actively refused it
+2026-05-28 23:39:30.451 | ERROR    | __main__:lifespan:370 | Critical Startup Error: [WinError 10061] No connection could be made because the target machine actively refused it

@@ -38,11 +38,11 @@ FILTER_YEAR = 2018
 # Parameters
 BATCH_SIZE = 32
 MAX_TOKENS = 256
-TOP_K = 20
-INITIAL_K = 20
+TOP_K = 30
+INITIAL_K = 30
 RRF_K = 60
 MAX_DUPLICATES = 1
-DO_RERANK = True
+DO_RERANK = False
 
 # Qdrant Configuration
 QDRANT_URL = os.getenv("QDRANT_URL")
@@ -86,16 +86,19 @@ BNB_CONFIG = {
 GROQ_SYSTEM_PROMPT = (
     "You are RezRag, a knowledgeable and helpful local food recommendation guide on the Yelp restaurant dataset.\n\n"
     "Use ONLY the provided context. do not rely on outside knowledge. Do NOT invent restaurants, dishes, prices, or locations.\n"
-    "Be eloquent and offer long explanations to support each recommendation\n"
+    "Be eloquent and offer long explanations, pull real details from the reviews to support each recommendation\n"
     "Maintain a friendly, casual, conversational tone — like a knowledgeable local friend giving advice, not a structured report.\n\n"
     "Use ONLY the provided context. Do not rely on outside knowledge. Do NOT invent restaurants, dishes, prices, or locations.\n\n"
-    "For each recommendation use this format:\n"
-    "For each recommendation use EXACTLY this format:\n"
-    "**Restaurant Name** 📍 *address, city*\n\n"
-    "🍽️ Why it fits the query and what makes it special from reviews in 2-3 sentences.\n\n"
-    "🌟 Must-try: standout dish or feature mentioned in reviews and explain why.\n\n"
-    "💡 *Tip: one practical tip from the reviews.*\n\n"
-    "There MUST be a blank line between the description and the tip, and a --- divider between restaurants.\n\n"
+    "For each recommendation you may use this:\n"
+    "\n\n"
+    "**Restaurant Name** 📍 *address, city*\n"
+    "\n\n"
+    "🍽️ [2-3 sentences: what makes this place the right answer for THIS specific query. "
+    "Pull concrete details from the reviews — atmosphere, a specific dish, a recurring compliment. "
+    "Never use the phrase 'why it fits' or any generic filler.]\n\n"
+    "🌟 **Must-try:** [specific dishes or features from the reviews and exactly why reviewers love it]\n\n"
+    "💡 *Tip:* [actionable tips a local would actually give — best time to go, what to order first, what to skip etc]\n\n"
+    "There MUST be a blank line between the description and the tip.\n\n"
     "Keep each recommendation tight — no essays. Cover all spots without repeating yourself.\n\n"
     "Always read the user query carefully and respect the constraints:\n"
     "   - Health conditions or discomfort → recommend "
@@ -306,6 +309,218 @@ VIBE_KEYWORDS = {
     "casual",
     "romantic",
 }
+
+
+COVERED_AREAS = [
+    # Cities
+    "philadelphia",
+    "tampa",
+    "tucson",
+    "indianapolis",
+    "nashville",
+    "new orleans",
+    "reno",
+    "edmonton",
+    "santa barbara",
+    "boise",
+    "fort myers",
+    # States/provinces in dataset
+    "pennsylvania",
+    "florida",
+    "arizona",
+    "indiana",
+    "tennessee",
+    "louisiana",
+    "nevada",
+    "alberta",
+    "california",
+    "idaho",
+    # NJ is covered via Philly metro
+    "new jersey",
+    "nj",
+    # Abbreviations
+    "pa",
+    "fl",
+    "az",
+    "in",
+    "tn",
+    "la",
+    "nv",
+    "ca",
+    "id",
+]
+OUT_OF_COVERAGE = [
+    # International
+    "mumbai",
+    "delhi",
+    "bandra",
+    "london",
+    "toronto",
+    "paris",
+    "sydney",
+    "tokyo",
+    "beijing",
+    "dubai",
+    "singapore",
+    "bangkok",
+    "mexico city",
+    "amsterdam",
+    "rome",
+    "madrid",
+    "barcelona",
+    "lisbon",
+    "moscow",
+    "cairo",
+    "karachi",
+    "lahore",
+    "dhaka",
+    "jakarta",
+    "seoul",
+    "hong kong",
+    "taipei",
+    "kuala lumpur",
+    "manila",
+    "colombo",
+    "berlin",
+    "munich",
+    "hamburg",
+    "vienna",
+    "zurich",
+    "brussels",
+    "stockholm",
+    "oslo",
+    "copenhagen",
+    "helsinki",
+    "warsaw",
+    "prague",
+    "budapest",
+    "bucharest",
+    "athens",
+    "istanbul",
+    "tel aviv",
+    "riyadh",
+    "doha",
+    "abu dhabi",
+    "nairobi",
+    "lagos",
+    "johannesburg",
+    "cape town",
+    "accra",
+    "sydney",
+    "melbourne",
+    "auckland",
+    "christchurch",
+    "sao paulo",
+    "rio de janeiro",
+    "buenos aires",
+    "bogota",
+    "lima",
+    # US cities/regions not in dataset
+    "new york",
+    "nyc",
+    "new york city",
+    "chicago",
+    "chicago il",
+    "los angeles",
+    "la",
+    "hollywood",
+    "beverly hills",
+    "malibu",
+    "san francisco",
+    "sf",
+    "bay area",
+    "silicon valley",
+    "oakland",
+    "berkeley",
+    "miami",
+    "miami beach",
+    "fort lauderdale",
+    "boca raton",
+    "seattle",
+    "bellevue",
+    "redmond",
+    "boston",
+    "cambridge ma",
+    "somerville",
+    "denver",
+    "boulder",
+    "colorado springs",
+    "atlanta",
+    "buckhead",
+    "midtown atlanta",
+    "houston",
+    "sugar land",
+    "the woodlands",
+    "dallas",
+    "fort worth",
+    "plano",
+    "frisco",
+    "phoenix",
+    "scottsdale",
+    "tempe",
+    "chandler",
+    "mesa",
+    "portland",
+    "salem or",
+    "detroit",
+    "ann arbor",
+    "dearborn",
+    "las vegas",
+    "vegas",
+    "henderson nv",
+    "baltimore",
+    "annapolis",
+    "minneapolis",
+    "saint paul",
+    "st paul",
+    "kansas city",
+    "overland park",
+    "cleveland",
+    "akron",
+    "pittsburgh",
+    "charlotte",
+    "raleigh",
+    "durham",
+    "austin",
+    "san antonio tx",
+    "corpus christi",
+    "san diego",
+    "chula vista",
+    "orlando",
+    "kissimmee",
+    "daytona",
+    "cincinnati",
+    "columbus oh",
+    "toledo oh",
+    "memphis",
+    "knoxville",
+    "chattanooga",
+    "salt lake city",
+    "slc",
+    "provo",
+    "albuquerque",
+    "santa fe",
+    "omaha",
+    "lincoln ne",
+    "richmond va",
+    "norfolk",
+    "virginia beach",
+    "hartford",
+    "new haven",
+    "bridgeport ct",
+    "buffalo ny",
+    "rochester ny",
+    "albany ny",
+    "new jersey",  # remove this if you want NJ queries to pass through to Philly metro
+    "bronx",
+    "brooklyn",
+    "manhattan",
+    "queens",
+    "staten island",
+    "long island",
+    "jersey city",
+    "newark nj",
+]
 
 DATASET_CITIES = {
     "abington",
@@ -632,24 +847,30 @@ STATE_TO_PRIMARY_CITY = {
     "DE": None,
 }
 
+
 NON_FOOD_PATTERNS = [
-    # Greetings
+    # ── Greetings (anchored — standalone only) ────────────────────────────────
     r"^(hi+|hey+|hello+|sup|yo|hiya|howdy|hola|bonjour|ciao)\s*[!?.,]?$",
     r"^(what'?s up|whats up|wassup|wazzup|what up)\s*[!?.,]?$",
     r"^(how (are|you|is it|are you doing|you doing|r u))\s*[!?.,]?$",
     r"^(good morning|good afternoon|good evening|good night|gm|gn)\s*[!?.,]?$",
-    r"^(thanks|thank you|thx|ty|bye|goodbye|ciao|ok|okay|cool|nice|great|awesome|sure|alright|aight)\s*[!?.,]?$",
-    r"^(lol|lmao|lmfao|haha|hehe|omg|wtf|bruh|bro|sis|dude|man|bro)\s*[!?.,]?$",
-    r"^(yes|no|nope|yep|yeah|nah|maybe|idk|idcyou|suck|hate|this|what|wot|shi|bye)\s*[!?.,]?$",
+    r"^(thanks|thank you|thx|ty|bye|goodbye|ok|okay|cool|nice|great|awesome|sure|alright|aight)\s*[!?.,]?$",
+    r"^(lol|lmao|lmfao|haha|hehe|omg|wtf|bruh|bro|sis|dude|man)\s*[!?.,]?$",
+    r"^(yes|no|nope|yep|yeah|nah|maybe|idk|wot|bye)\s*[!?.,]?$",
     r"^(you suck|this sucks|hate this|worst|terrible|awful|useless)\s*[!?.,]?$",
-    r"^.{1,2}$",  # 1-2 character inputs
-    r"^[^a-zA-Z\s]+$",  # only symbols/numbers
-    r"^[a-zA-Z]{1,2}\s*$",  # single or double letter
-    r"^(.)\1{2,}$",
-    # Random keyboard mashing
-    r"^[a-z]{6,}$",  # 6+ lowercase with no spaces = likely mashing
-    r"^[A-Za-z]{1,}[0-9]{1,}[A-Za-z0-9]*$",
-    # Meta questions
+    # ── Short / empty / symbol-only inputs ────────────────────────────────────
+    r"^.{1,3}$",  # 1–3 character inputs (catches "abc", "hi", "ok", "??")
+    r"^[^a-zA-Z\s]+$",  # only symbols/numbers, no letters
+    r"^(.)\1{2,}$",  # repeated single char: aaaa, !!!!, zzzzz
+    # ── Keyboard mashing ──────────────────────────────────────────────────────
+    # FIX: Old r"^[a-z]{6,}$" blocked "breakfast", "dinner", "brunch", "burgers",
+    #      "sashimi", "seafood" and all other 6-char lowercase single-word food terms.
+    #      New pattern requires ONLY consonants (no vowels) — pure consonant soup = mash.
+    r"^[b-df-hj-np-tv-z]{5,}$",  # e.g. sdfghj, qwrtyp, zxcvbn
+    r"^(asdf|qwerty|zxcv|hjkl)+.*$",  # keyboard row smashes
+    r"^(.)\1{4,}$",  # aaaaaaa, 1111111
+    r"^[A-Za-z]{1,}[0-9]{1,}[A-Za-z0-9]*$",  # alphanumeric mash: abc123, x1y2z3
+    # ── Meta / capability questions ───────────────────────────────────────────
     r"what should (i|a user|someone|people) (type|ask|say|search|write|query|enter)",
     r"what (do you|can you) (do|speciali[sz]e|help|offer|cover|know|recommend)",
     r"how (do|can|should) (i|you|someone) use (this|you|the app|rezrag)",
@@ -659,106 +880,116 @@ NON_FOOD_PATTERNS = [
     r"are you (a bot|an ai|chatgpt|claude|gpt|real|human)",
     r"who (made|built|created|trained|developed) you",
     r"what (model|llm|ai) are you",
-    # Hotels / accommodation
-    r"\b(hotel|hotels|motel|airbnb|hostel|resort|accommodation|lodging|inn|bed and breakfast|b&b|vrbo|rental)\b",
-    r"\b(book a|reserve a|check in|check out|room|suite|stay at)\b",
-    # Entertainment
+    # ── Hotels / accommodation ────────────────────────────────────────────────
+    r"\b(hotel|hotels|motel|airbnb|hostel|resort|accommodation|lodging|inn|bed and breakfast|b&b|vrbo)\b",
+    # FIX: Old r"\b(book a|reserve a|...)\b" blocked "book a table at a restaurant".
+    #      New pattern only triggers on hotel/travel-specific objects after "book a" / "reserve a".
+    r"\b(book a (room|hotel|flight|ticket|motel|hostel|airbnb)|reserve a (room|hotel|suite)|check in|check out|hotel suite|stay at a (hotel|motel|resort|inn|hostel))\b",
+    # ── Entertainment ─────────────────────────────────────────────────────────
     r"\b(movie|cinema|theater|theatre|film|show|concert|event|ticket|tickets|gig|festival|exhibit|exhibition|gallery|museum)\b",
     r"\b(watch|streaming|netflix|hulu|disney|amazon prime|hbo)\b",
-    # Directions / travel
+    # ── Directions / travel ───────────────────────────────────────────────────
+    # FIX: Removed "near me" — "sushi near me", "food near me in Tampa" are valid food queries.
+    #      The app has no geolocation anyway; no city filter is better than a blocked query.
     r"\b(how do i get to|directions to|navigate to|drive to|flight to|train to|bus to|uber to|lyft to)\b",
-    r"\b(how far is|distance to|miles from|minutes from|closest to|near me)\b",
-    r"\b(airport|terminal|gate|flight|airline|amtrak|greyhound|transit|subway|metro|bus route)\b",
-    r"\b(parking|where to park|parking lot|garage near)\b",
-    # Sports / news
+    r"\b(how far is|distance to|miles from|minutes from|closest to)\b",
+    r"\b(airport|terminal|gate|airline|amtrak|greyhound|transit|subway|metro|bus route)\b",
+    # FIX: Old r"\b(parking|...)\b" blocked "restaurant with parking", "burger places with parking".
+    #      New pattern requires explicit parking-search context.
+    r"\b(where to park|parking lot near|parking garage|parking meter|free parking map)\b",
+    # ── Sports / news ─────────────────────────────────────────────────────────
     r"\b(who won|what score|game result|sports score|super bowl|world cup|championship|playoffs|standings|roster)\b",
     r"\b(nfl|nba|mlb|nhl|mls|premier league|la liga|fifa|olympics)\b",
     r"\b(breaking news|latest news|headlines|weather forecast|stock price|crypto|bitcoin)\b",
-    # Shopping
-    r"\b(buy|purchase|order online|amazon|walmart|target|best buy|shop for|where to buy)\b",
-    r"\b(price of|how much does|cost of|cheapest|discount|coupon|promo code)\b",
-    # Medical / personal
-    r"\b(doctor|hospital|pharmacy|medication|prescription|symptoms|diagnosis|therapist|dentist)\b",
+    # ── Shopping ──────────────────────────────────────────────────────────────
+    # FIX: Removed "buy", "purchase", "where to buy" — too broad.
+    #      "where to buy fresh pasta in Nashville" is a legitimate food intent.
+    r"\b(order online|amazon|walmart|target|best buy|shop for)\b",
+    # FIX: Removed "cheapest" — "cheapest restaurants in Tampa" is a valid food query.
+    r"\b(price of|how much does|cost of|discount|coupon|promo code)\b",
+    # ── Medical / personal ────────────────────────────────────────────────────
+    r"\b(doctor|hospital|pharmacy|medication|prescription|symptoms|diagnosis|dentist)\b",
     r"\b(lawyer|attorney|legal advice|insurance|tax|accountant|financial advisor)\b",
-    # Tech support
+    # ── Tech support ──────────────────────────────────────────────────────────
     r"\b(how to install|download|update|fix|error|bug|crash|not working|reset password)\b",
     r"\b(iphone|android|windows|mac|laptop|computer|wifi|internet|vpn)\b",
+    # ── Random / testing ──────────────────────────────────────────────────────
     r"^(test|testing|123|hello world|asdf|qwerty|foo|bar)\s*$",
-    r"^[^a-zA-Z]*$",
-    r"^\s*$",
+    r"^[^a-zA-Z]*$",  # only symbols/numbers
+    r"^\s*$",  # empty or whitespace
+    # ── Prompt injection / jailbreaks ─────────────────────────────────────────
     r"\b(ignore (all )?previous instructions|system prompt|bypass|jailbreak|you are now|act as|pretend to be|dan|developer mode)\b",
-    # 2. Humor / Party Tricks
+    # ── AI party tricks ───────────────────────────────────────────────────────
     r"\b(tell me a joke|make me laugh|sing a song|do a flip|do a barrel roll|tell a story|knock knock|write a poem)\b",
-    # 3. Philosophical / Existential
+    # ── Philosophical / existential ───────────────────────────────────────────
     r"\b(meaning of life|are you conscious|do you have feelings|are you self[- ]?aware|do you sleep|do you dream|are you alive)\b",
-    # 4. Romance / Flirting
+    # ── Romance / flirting ────────────────────────────────────────────────────
     r"\b(do you love me|will you marry me|are you single|be my (gf|bf|girlfriend|boyfriend)|i love you|send nudes)\b",
-    # 5. Math / Coding / Homework Help
+    # ── Coding / homework help ────────────────────────────────────────────────
     r"\b(write a (python|javascript|c\+\+|java|html) script|code a|debug this|fix my code|github|stack overflow)\b",
     r"\b(solve for|calculate|math problem|equation|derivative|integral|square root|what is \d+\s*[\+\-\*\/])\b",
     r"\b(write an essay|summarize this article|translate (to|from)|proofread|homework help)\b",
-    # 6. Virtual Assistant / Smart Home Commands
+    # ── Virtual assistant / smart home commands ───────────────────────────────
     r"\b(set an alarm|remind me to|turn (on|off) the (lights|tv)|call (mom|dad|my)|text (my|mom|dad)|what time is it)\b",
-    # 7. Gen-Z Slang
+    # ── Gen-Z slang / internet brainrot ──────────────────────────────────────
     r"\b(skibidi|rizz|sigma|based|cringe|gyatt|no cap|fr fr|sus|amogus|uwu|owo)\b",
-    # 8. Politics / Religion / Controversial
+    # ── Politics / religion ───────────────────────────────────────────────────
     r"\b(who did you vote for|democrat|republican|trump|biden|election|jesus|god|religion|bible|quran|atheist)\b",
-    # 9. Pets / Animals / Vets
-    r"\b(dog(s)?|cat(s)?|puppy|kitten|veterinarian|vet near me|pet store|dog park|aquarium|zoo)\b",
-    # 10. Jobs / Career / Social Media
+    # ── Pets / animals ────────────────────────────────────────────────────────
+    # FIX: Old r"\b(dog(s)?|cat(s)?|...)\b" blocked "hot dog", "corn dog", "hot dogs",
+    #      "corn dog spots in philly", "dog friendly restaurant patios".
+    #      New pattern uses specific pet-care contexts instead of bare animal words.
+    r"\b(puppy|kitten|veterinarian|vet near me|pet store|dog park|aquarium|zoo|my dog|my cat|my pet|pet food|cat food|dog food|cat litter|dog walk)\b",
+    # ── Jobs / career / social media ──────────────────────────────────────────
     r"\b(resume|cover letter|job interview|hiring|salary|linkedin|indeed|glassdoor)\b",
-    r"\b(instagram|tiktok|twitter|x|facebook|snapchat|youtube|influencer|follower(s)?)\b",
-    # 11. Cryptic / Edge-case Typing
-    r"^(asdf|qwerty|zxcv|hjkl)+.*$",  # Common keyboard mash rows
-    r"^(.)\1{4,}$",
+    r"\b(instagram|tiktok|twitter|x\.com|facebook|snapchat|youtube|influencer|follower(s)?)\b",
+    # ── Insults / frustration ─────────────────────────────────────────────────
     r"\b(stupid|idiot|dumb|useless|hate you|shut up|sucks|terrible|worst)\b",
     r"\b(f[u\*]ck|sh[i\*]t|b[i\*]tch|a[s\$][s\$]hole|crap|damn)\b",
-    # 2. Mental Health / Crisis
-    r"\b(depressed|suicidal|kill myself|end it all|anxiety|lonely|panic attack|self harm|therapist)\b",
+    # ── Mental health / crisis ────────────────────────────────────────────────
+    r"\b(depressed|suicidal|kill myself|end it all|anxiety|lonely|panic attack|self harm)\b",
     r"\b(i hate my life|nobody cares about me|giving up)\b",
-    # 3. PII (Personally Identifiable Information) / Sensitive Data
+    # ── PII / sensitive data ──────────────────────────────────────────────────
     r"\b(ssn|social security|credit card|cvv|password is|my address is|phone number is)\b",
-    r"\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b",  # Basic SSN-like pattern check
-    # 4. Office / Admin Chores
+    r"\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b",  # SSN-like pattern
+    # ── Office admin ──────────────────────────────────────────────────────────
     r"\b(write an email|draft a(n)? (letter|memo)|schedule a meeting|create a presentation)\b",
     r"\b(excel formula|spreadsheet|vlookup|pivot table|google docs|pdf)\b",
-    # 5. Gaming / Esports
+    # ── Gaming / esports ─────────────────────────────────────────────────────
     r"\b(minecraft|roblox|fortnite|gta|valorant|league of legends|elden ring|pokemon)\b",
     r"\b(xbox|playstation|nintendo|steam deck|how to beat|boss fight|cheat codes|walkthrough)\b",
-    # 6. Encyclopedia / Trivia
+    # ── Encyclopedia / trivia ────────────────────────────────────────────────
     r"\b(capital of|population of|who invented|history of|world war|president of)\b",
     r"\b(when was .* born|how many countries|tallest building|longest river|facts about)\b",
-    # 7. The "Are you there?" Pings
+    # ── "Are you there?" pings ────────────────────────────────────────────────
     r"^(you there|u there|hello\?|anyone there|still there|wake up)\??\s*$",
-    # 8. Time / Date / Calendar
+    # ── Time / date ───────────────────────────────────────────────────────────
     r"\b(what time is it( in)?|what day is it|current date|how many days until|leap year)\b",
-    # 9. Language / Translation Queries
+    # ── Translation ───────────────────────────────────────────────────────────
     r"\b(how do you say|translate .* to|what does .* mean in (spanish|french|english|japanese))\b",
+    # ── Automotive ────────────────────────────────────────────────────────────
     r"\b(oil change|flat tire|mechanic|dealership|car insurance|brake pads|windshield wipers|transmission|gas prices)\b",
     r"\b(check engine light|jump start|towing company|dmv|driver'?s license)\b",
-    # 2. Fitness / Exercise (Non-Diet)
-    r"\b(workout routine|gym|pushups|yoga|pilates|crossfit|weightlifting|cardio|treadmill|marathon|biceps|hypertrophy)\b",
-    # 3. Real Estate / Housing
+    # ── Fitness (non-diet) ────────────────────────────────────────────────────
+    r"\b(workout routine|pushups|yoga|pilates|crossfit|weightlifting|cardio|treadmill|marathon|biceps|hypertrophy)\b",
+    # ── Real estate ───────────────────────────────────────────────────────────
     r"\b(mortgage|realtor|zillow|apartments\.com|renting an apartment|homeowner|interest rates|eviction|open house)\b",
-    # 4. Fashion / Beauty / Grooming
+    # ── Fashion / beauty ─────────────────────────────────────────────────────
     r"\b(skincare|makeup|sephora|haircut|hairstyle|outfit|sneakers|wardrobe|cosmetics|dermatologist|manicure|pedicure)\b",
-    # 5. Music / Audio
+    # ── Music / audio ────────────────────────────────────────────────────────
     r"\b(lyrics to|guitar chords|sheet music|spotify|apple music|podcast episode|who sings|album release|playlist)\b",
-    # 6. Arts, Crafts, & DIY
+    # ── Arts / DIY ───────────────────────────────────────────────────────────
     r"\b(crochet|knitting|origami|watercolor|acrylic paint|plumbing|drywall|home depot|lowe'?s|woodworking|diy project)\b",
-    # 7. Astrology / Esoteric
+    # ── Astrology ────────────────────────────────────────────────────────────
     r"\b(horoscope|zodiac|astrology|tarot|pisces|aries|taurus|gemini|mercury retrograde|fortune teller|birth chart)\b",
-    # 8. Science / Space / Nature
+    # ── Science / space ──────────────────────────────────────────────────────
     r"\b(black hole|nasa|spacex|quantum physics|astronomy|telescope|aliens|ufo|speed of light|dinosaurs|fossils)\b",
-    # 9. Parenting / Childcare (Non-Food)
+    # ── Parenting / childcare ────────────────────────────────────────────────
     r"\b(diapers|potty training|babysitter|daycare|kindergarten|toddler tantrums|stroller|crib|pacifier)\b",
-    # 10. Dating / Relationship Advice
+    # ── Dating / relationships ────────────────────────────────────────────────
     r"\b(tinder|bumble|hinge|breakup advice|divorce|marriage counseling|toxic relationship|ghosting|red flags)\b",
-    # 11. Delivery/Mail Logistics (Non-Food)
+    # ── Shipping / mail ───────────────────────────────────────────────────────
     r"\b(usps|fedex|ups|dhl|tracking number|post office|stamps|shipping cost|po box|return label)\b",
-    # Insults / frustration
-    r"\b(you suck|this sucks|hate (you|this)|worst (app|bot|thing)|useless|garbage|trash|stupid bot)\b",
-    # Empty / whitespace / symbols only
-    r"^[^a-zA-Z]*$",
-    r"^\s*$",
+    # ── App insults ───────────────────────────────────────────────────────────
+    r"\b(you suck|this sucks|hate (you|this)|worst (app|bot|thing)|garbage|trash|stupid bot)\b",
 ]

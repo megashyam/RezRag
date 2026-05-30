@@ -398,7 +398,7 @@ export default function Home() {
               { step: "05", label: "Qdrant Ingestion", detail: "UUID5 stable IDs, generator-based batching" },
               { step: "06", label: "Hybrid Search + RRF", detail: "Dense + sparse fusion, no framework" },
               { step: "07", label: "CrossEncoder Rerank", detail: "ms-marco-MiniLM-L-6-v2, 400-char truncation" },
-              { step: "08", label: "Qwen 2.5 32B via Groq(For production)", detail: "Streaming , token-by-token" },
+              { step: "08", label: "Qwen 3 32B via Groq(For production)", detail: "Streaming , token-by-token" },
             ].map(({ step, label, detail }, i, arr) => (
               <div key={step} style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
                 {/* Step number + connector */}
@@ -426,6 +426,9 @@ export default function Home() {
         </div>
 
         {/* Performance optimizations — collapsible */}
+
+
+
         <div style={{ width: "100%", maxWidth: 480, margin: "0 auto 28px" }}>
           <button
             onClick={() => setShowPerf(v => !v)}
@@ -457,7 +460,7 @@ export default function Home() {
               {[
                 { layer: "Data", items: ["orjson 3–5× faster than stdlib json", "Filter cascade: O(1) set → date string → word count", "df.melt() + df.explode() — C-level vectorization", "Generator-based Qdrant ingestion — flat RAM"] },
                 { layer: "Chunking", items: ["len(text)//3 fast token estimation", "tiktoken.encode() only on borderline chunks", "Single-pass progress_apply — no intermediate DataFrames"] },
-                { layer: "Retrieval", items: ["INITIAL_K=8 — CrossEncoder rerank time ↓70%", "400-char doc truncation — quadratic attention cost", "BM25 on candidate subset only, not full corpus", "spaCy NER geo-filter cuts Qdrant search space"] },
+                { layer: "Retrieval", items: ["400-char doc truncation — quadratic attention cost", "BM25 on candidate subset only, not full corpus", "spaCy NER geo-filter cuts Qdrant search space"] },
                 { layer: "Deployment", items: ["Modal Volume — models cached, not re-downloaded", "keep_warm=1 — one container always hot", "Qdrant co-located in same GCP region as Modal", "6-hour query cache — repeated queries skip retrieval"] },
                 { layer: "Frontend", items: ["setTimeout(fn,30) — token updates batched to ~60fps", "Leaflet lazy-loaded (ssr:false) — no SSR crash", "Health check via API route — no CORS on Modal calls"] },
               ].map(({ layer, items }) => (
@@ -481,7 +484,7 @@ export default function Home() {
         {/* Query chips */}
         <div className="fade-up-4" style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 10 }}>
           {[
-            { label: "Best tacos in New Jersey", icon: UtensilsCrossed },
+            { label: "Best pizzerias in Santa Barbara", icon: UtensilsCrossed },
             { label: "Family friendly sushi restaurants", icon: MapPin },
             { label: "Best seafood places with waterfront views", icon: Clock },
             { label: "Bars with live music and cocktails Philadelphia", icon: Star },
