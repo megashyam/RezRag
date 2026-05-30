@@ -126,7 +126,7 @@ Both microservices are deployed on [Modal](https://modal.com) — a serverless G
 Key deployment decisions:
 - E5-large-v2 and CrossEncoder models pre-cached in a Modal **Volume** to avoid re-downloading on cold start
 - `keep_warm=1` on the retriever keeps one container warm to eliminate cold start latency
-- Generator calls **Groq API** (`qwen-2.5-32b`) instead of loading a local LLM — no GPU required in production
+- Generator calls **Groq API** (`qwen-3-32b`) instead of loading a local LLM — no GPU required in production
 
 ### Frontend (Vercel + Next.js)
 A new Next.js frontend replaces the original chat interface, deployed on Vercel
@@ -174,7 +174,7 @@ Retrieval is not a single step but a cascade of filters designed to maximize pre
 * **Model(On Device):** `Qwen/Qwen2.5-7B-Instruct`. Chosen for its superior reasoning capabilities at small parameter counts.
 * **Quantization:** Loaded in **4-bit NF4** (Normal Float 4) format using `bitsandbytes`. This reduces VRAM usage from ~7GB to ~2.5GB, allowing high-performance inference on consumer hardware (RTX 3060/4060).
 * **Streaming:** Responses are streamed token-by-token using Python Generators and Server-Sent Events (NDJSON) to minimize Time-To-First-Token (TTFT).
-* **Model(Live Demo):** `Qwen/Qwen2.5-32B` via **Groq API**. Zero GPU cost, ~500ms TTFT
+* **Model(Live Demo):** `Qwen/Qwen3-32B` via **Groq API**. Zero GPU cost, ~500ms TTFT
 
 ---
 
@@ -304,13 +304,13 @@ Create a `.env` file in the root directory:
 
 ```ini
 QDRANT_URL=http://localhost:6333
-QDRANT_API_KEY=  # Leave blank for local instance
+QDRANT_API_KEY=  
 
 E5_URL=http://127.0.0.1:5000/embed
 RETRIEVER_URL=http://127.0.0.1:8000/retrieve
 
 GROQ_API_KEY=gsk_...
-GROQ_MODEL_ID=qwen-2.5-32b
+GROQ_MODEL_ID=qwen-3-32b
 
 ```
 
