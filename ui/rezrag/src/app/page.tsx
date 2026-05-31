@@ -329,13 +329,35 @@ export default function Home() {
           <span style={{ color: "var(--accent)" }}>perfect meal.</span>
         </h1>
 
-        <p className="fade-up-2" style={{ fontSize: 17, lineHeight: 1.75, color: "var(--text-2)", margin: "0 0 36px", maxWidth: 440, marginLeft: "auto", marginRight: "auto" }}>
+        <p className="fade-up-2" style={{ fontSize: 17, lineHeight: 1.75, color: "var(--text-2)", margin: "0 0 30px", maxWidth: 440, marginLeft: "auto", marginRight: "auto" }}>
           Ask anything about local restaurants. Real Yelp reviews, real recommendations
           built entirely from scratch without LangChain, LlamaIndex, or any RAG framework.
         </p>
 
 
-
+        {/* Coverage note */}
+        <div style={{
+          margin: "0 auto 20px",
+          padding: "5px 10px",
+          borderRadius: 10,
+          // background: "var(--bg-4)",
+          // border: "1px solid var(--border)",
+          fontSize: 11,
+          color: "var(--text-2)",
+          textAlign: "center",
+          lineHeight: 1.8,
+          maxWidth: 480,
+          marginLeft: "auto",
+          marginRight: "auto",
+        }}>
+          <span style={{ fontWeight: 600, color: "var(--text-2)" }}>📍 The Yelp Dataset only covers</span>
+          {" · "}
+          Philadelphia · Nashville · Tampa · New Orleans · Indianapolis · Tucson · Reno · Boise · Santa Barbara · Edmonton
+          <br />
+          <span style={{ fontSize: 11, fontStyle: "italic" }}>
+            + surrounding suburbs across PA, NJ, FL, TN, LA, IN, AZ, NV, ID, CA & Alberta
+          </span>
+        </div>
 
 
         {/* Feature pills */}
@@ -353,29 +375,7 @@ export default function Home() {
           ))}
         </div>
 
-        {/* Coverage note */}
-        <div style={{
-          margin: "0 auto 28px",
-          padding: "10px 16px",
-          borderRadius: 10,
-          // background: "var(--bg-2)",
-          // border: "1px solid var(--border)",
-          fontSize: 11,
-          color: "var(--text-3)",
-          textAlign: "center",
-          lineHeight: 1.8,
-          maxWidth: 480,
-          marginLeft: "auto",
-          marginRight: "auto",
-        }}>
-          <span style={{ fontWeight: 600, color: "var(--text-2)" }}>📍 Coverage</span>
-          {" · "}
-          Philadelphia · Nashville · Tampa · New Orleans · Indianapolis · Tucson · Reno · Boise · Santa Barbara · Edmonton
-          <br />
-          <span style={{ fontSize: 10, fontStyle: "italic" }}>
-            + surrounding suburbs across PA, NJ, FL, TN, LA, IN, AZ, NV, ID, CA & Alberta
-          </span>
-        </div>
+
 
 
         {/* Pipeline showcase */}
