@@ -162,10 +162,10 @@ fragmentation across requests.
 
 | Step | Latency |
 | :--- | :--- |
-| E5 embedding (CPU)| ~200-600ms |
-| Qdrant vector search | ~133-500ms |
-| BM25 + RRF | ~5ms |
-| CrossEncoder rerank (8 docs) | ~200ms |
+| E5 embedding (CPU)| ~200-500ms |
+| Qdrant vector search | ~133-700ms |
+| BM25 + RRF | ~0ms |
+| CrossEncoder rerank (8 docs) | ~200-400ms|
 | **Total retrieval** | **~700ms–1.2s** |
 | Groq LLM (streaming) | ~1–3s TTFT |
 | **End-to-end (warm)** | **~2–4s** |
