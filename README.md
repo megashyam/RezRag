@@ -16,6 +16,55 @@ The system is architected as a set of decoupled, asynchronous microservices to e
 To demonstrate a real understanding of everything that happens under the hood of RAG Frameworks. RezRag is built with full control and zero abstractions. No LangChain. No LlamaIndex. No RAG frameworks. This project starts from the raw Yelp Academic Dataset (~10GB, multi-file NDJSON)
 and processes it end-to-end with no managed loaders. Every component (hybrid search, BM25, RRF fusion, cross-encoder reranking, streaming microservices) is hand-rolled in Python. :
 
+---
+
+
+## Data Pipeline — From Raw Yelp JSON to Production Grade Vector DB
+
+The entire data pipeline is hand-built from the raw 
+[Yelp Academic Dataset](https://www.yelp.com/dataset) ~10GB across multiple 
+JSON files with no managed loaders, pre-processed datasets, or data APIs.
+
+### Challenges solved:
+
+**1. Multi-file joins at scale**: `business.json` and `review.json` are separate 
+files joined by `business_id`. I Processed in streaming fashion to avoid loading 
+gigabytes into RAM simultaneously.
+
+**2. Category filtering**: Yelp categories are free-text comma lists. I Built a 
+keyword filter to isolate restaurants from the 1000+ other business types in the 
+dataset.
+
+**3. Custom Restaurant Score**: raw star ratings are unreliable (3 reviews at 5
+outranks 2000 reviews at 4.7). I Built a weighted formula balancing rating, review 
+volume, and recency to surface genuinely high-quality restaurants.
+
+**4. Balanced sentiment sampling**: naive top-N sampling produces all 5-star 
+results. Sampled across sentiment buckets (positive/neutral/negative) so the 
+retriever has context on tradeoffs, wait times, and common complaints not just 
+hype.
+
+**5. Tiktoken-bounded chunking**: reviews range from 2 sentences to 20 paragraphs. 
+Character-based splitting breaks semantic coherence. I Used tiktoken to bound chunks 
+by token count so every chunk fits cleanly within E5-large-v2's 512-token context 
+window.
+
+**6. Typed chunk structure**: chunks are not raw review text. Each restaurant 
+produces three chunk types: Business Profile (name, location, hours, category), 
+Positive Review Summary, Negative Review Summary. This allows the retriever to 
+surface different facets depending on query intent.
+
+**7. Embedding at scale**: E5-large-v2 (1024 dimensions) run over tens of 
+thousands of chunks with batched inference, saved as `.pt` tensors for fast reload 
+without re-embedding.
+
+**8. Stable deduplication** — UUID5 (deterministic, content-based) IDs prevent 
+duplicate points on re-ingestion. Re-running the pipeline is idempotent.
+
+**9. Generator-based ingestion** — Qdrant upload streams in batches of 256 via 
+Python generators. RAM usage stays flat regardless of dataset size.
+
+---
 
 ### Streaming Filter Cascade (`preprocessor.py`)
 The review file contains millions of records. Loading it before filtering = 20GB RAM.
@@ -66,52 +115,84 @@ E5-large-v2 (1024-dim) run over 50k+ chunks with:
 
 ---
 
-## Data Pipeline — From Raw Yelp JSON to Production Vector DB
+## Inference
 
-The entire data pipeline is hand-built from the raw 
-[Yelp Academic Dataset](https://www.yelp.com/dataset) ~10GB across multiple 
-JSON files with no managed loaders, pre-processed datasets, or data APIs.
+**Local inference (offline mode)** — the Groq path is used in production, but a fully
+self-contained local generator is implemented for offline use. Loads
+`Qwen2.5-3B-Instruct` in **4-bit NF4** quantization via `bitsandbytes`:
 
-### Challenges solved:
+- `BitsAndBytesConfig` — reduces VRAM from ~14GB → ~2.5GB, runs on a consumer RTX 3060/4060
+- `attn_implementation="sdpa"` — PyTorch scaled dot-product attention, faster than the default eager path
+- `device_map="auto"` — automatically shards across available GPU/CPU
 
-**1. Multi-file joins at scale** — `business.json` and `review.json` are separate 
-files joined by `business_id`. I Processed in streaming fashion to avoid loading 
-gigabytes into RAM simultaneously.
+Streaming is handled by running `model.generate()` in a background thread with
+`TextIteratorStreamer` — the main thread yields tokens as they arrive without
+blocking:
 
-**2. Category filtering** — Yelp categories are free-text comma lists.I Built a 
-keyword filter to isolate restaurants from the 1000+ other business types in the 
-dataset.
+```python
+streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+thread = Thread(target=model.generate, kwargs={..., "streamer": streamer})
+thread.start()
+for token in streamer:
+    yield token
+```
 
-**3. Custom Restaurant Score** — raw star ratings are unreliable (3 reviews at 5
-outranks 2000 reviews at 4.7).I Built a weighted formula balancing rating, review 
-volume, and recency to surface genuinely high-quality restaurants.
+Memory is explicitly recycled after each generation — `gc.collect()` +
+`torch.cuda.empty_cache()` + `torch.cuda.ipc_collect()` — to prevent VRAM
+fragmentation across requests.
 
-**4. Balanced sentiment sampling** — naive top-N sampling produces all 5-star 
-results. Sampled across sentiment buckets (positive/neutral/negative) so the 
-retriever has context on tradeoffs, wait times, and common complaints not just 
-hype.
+| Path | Model | VRAM | TTFT |
+| :--- | :--- | :--- | :--- |
+| Production | Qwen3-32B via Groq API | 0 (serverless) | ~148ms |
+| Local | Qwen2.5-3B 4-bit NF4 | ~1.8GB | ~1–2s |
 
-**5. Tiktoken-bounded chunking** — reviews range from 2 sentences to 20 paragraphs. 
-Character-based splitting breaks semantic coherence.I Used tiktoken to bound chunks 
-by token count so every chunk fits cleanly within E5-large-v2's 512-token context 
-window.
+---
 
-**6. Typed chunk structure** — chunks are not raw review text. Each restaurant 
-produces three chunk types: Business Profile (name, location, hours, category), 
-Positive Review Summary, Negative Review Summary. This allows the retriever to 
-surface different facets depending on query intent.
+## ⚡ Performance Optimizations Implemented
 
-**7. Embedding at scale** — E5-large-v2 (1024 dimensions) run over tens of 
-thousands of chunks with batched inference, saved as `.pt` tensors for fast reload 
-without re-embedding.
+1. **Parquet & PyTorch Formats:** Replaced standard CSV/JSON/Pickle intermediate files with **Parquet** (for metadata) and **.pt Tensors** (for vectors). 
+2. **Pandas Vectorization:** `chunker.py` used `df.explode()` and `df.melt()` instead of expensive `for` loops. This moves the iteration logic to C-level Pandas optimizations, speeding up processing.
+3. **Generator-Based Ingestion:** The `ingestor.py` does not load the full dataset into RAM. It lazily reads from the disk and yields batches to the Qdrant client, allowing the ingestion of datasets larger than system RAM.
+4. **Query cache** — diskcache (SQLite-backed) with 6-hour TTL; repeated queries skip retrieval entirely
+5. **Qdrant co-location** — database and compute in same cloud region eliminates cross-cloud latency (~200ms saved)
 
-**8. Stable deduplication** — UUID5 (deterministic, content-based) IDs prevent 
-duplicate points on re-ingestion. Re-running the pipeline is idempotent.
+### Observed Performance (Deployed, Warm, Zero infrastructure cost)
 
-**9. Generator-based ingestion** — Qdrant upload streams in batches of 256 via 
-Python generators. RAM usage stays flat regardless of dataset size.
+| Step | Latency |
+| :--- | :--- |
+| E5 embedding (CPU)| ~200-600ms |
+| Qdrant vector search | ~133-500ms |
+| BM25 + RRF | ~5ms |
+| CrossEncoder rerank (8 docs) | ~200ms |
+| **Total retrieval** | **~700ms–1.2s** |
+| Groq LLM (streaming) | ~1–3s TTFT |
+| **End-to-end (warm)** | **~2–4s** |
 
-## Production Deployment
+> Variance is inherent to free-tier serverless infrastructure
+> Qdrant free cluster has variable wake latency, E5 runs on shared CPU.
+> A paid Qdrant cluster + dedicated CPU would bring retrieval under 400ms consistently.
+
+---
+
+## Retrieval Quality Evaluation
+
+Evaluated across **47 queries spanning all 12 dataset cities** with human-labeled relevance judgments and fuzzy name matching. Eval script: `eval.py`.
+
+| Strategy | MRR@5 | 95% CI | Hit@5 | P@5 | Avg Latency |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Hybrid (no rerank)** | **0.797** | **[0.703, 0.881]** | **0.979** | **0.380** | **686ms** |
+| Hybrid + Rerank | 0.794 | [0.699, 0.878] | 0.979 | 0.333 | 1566ms |
+
+**Key findings:**
+- Reranking disabled, MRR difference is negligible (+0.003) but latency cost is +880ms (+128%)
+- The CrossEncoder (`ms-marco-MiniLM-L-6-v2`) was trained on web Q&A (MS MARCO) it scores "does this passage answer the query," which doesn't generalise to vibe-based restaurant queries like "romantic dinner" or "best hot chicken"
+- Hit@5 of **0.979** — 46 of 47 queries return at least one relevant result in top 5
+- MRR@5 of **0.797** — first relevant result appears at position ~1.25 on average
+- Location accuracy: **96.7%** — city filter fires correctly across all 12 cities
+
+---
+
+## Deployment
 
 The original local prototype has been extended into a fully deployed, cloud-native system:
 
@@ -178,72 +259,35 @@ Retrieval is not a single step but a cascade of filters designed to maximize pre
 
 ---
 
-## ⚡ Performance Optimizations Implemented
-
-1. **Parquet & PyTorch Formats:** Replaced standard CSV/JSON/Pickle intermediate files with **Parquet** (for metadata) and **.pt Tensors** (for vectors). 
-2. **Pandas Vectorization:** `chunker.py` used `df.explode()` and `df.melt()` instead of expensive `for` loops. This moves the iteration logic to C-level Pandas optimizations, speeding up processing.
-3. **Generator-Based Ingestion:** The `ingestor.py` does not load the full dataset into RAM. It lazily reads from the disk and yields batches to the Qdrant client, allowing the ingestion of datasets larger than system RAM.
-4. **Query cache** — diskcache (SQLite-backed) with 6-hour TTL; repeated queries skip retrieval entirely
-5. **Qdrant co-location** — database and compute in same cloud region eliminates cross-cloud latency (~200ms saved)
-
-### Observed Performance (Deployed, Warm, Zero infrastructure cost)
-
-| Step | Latency |
-| :--- | :--- |
-| E5 embedding (CPU)| ~200-600ms |
-| Qdrant vector search | ~133-500ms |
-| BM25 + RRF | ~5ms |
-| CrossEncoder rerank (8 docs) | ~200ms |
-| **Total retrieval** | **~700ms–1.2s** |
-| Groq LLM (streaming) | ~1–3s TTFT |
-| **End-to-end (warm)** | **~2–4s** |
-
-> Variance is inherent to free-tier serverless infrastructure
-> Qdrant free cluster has variable wake latency, E5 runs on shared CPU.
-> A paid Qdrant cluster + dedicated CPU would bring retrieval under 400ms consistently.
-
- 
-## Retrieval Quality Evaluation
-
-Evaluated across **47 queries spanning all 12 dataset cities** with human-labeled relevance judgments and fuzzy name matching. Eval script: `eval.py`.
-
-| Strategy | MRR@5 | 95% CI | Hit@5 | P@5 | Avg Latency |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Hybrid (no rerank)** | **0.797** | **[0.703, 0.881]** | **0.979** | **0.380** | **686ms** |
-| Hybrid + Rerank | 0.794 | [0.699, 0.878] | 0.979 | 0.333 | 1566ms |
-
-**Key findings:**
-- Reranking disabled, MRR difference is negligible (+0.003) but latency cost is +880ms (+128%)
-- The CrossEncoder (`ms-marco-MiniLM-L-6-v2`) was trained on web Q&A (MS MARCO) it scores "does this passage answer the query," which doesn't generalise to vibe-based restaurant queries like "romantic dinner" or "best hot chicken"
-- Hit@5 of **0.979** — 46 of 47 queries return at least one relevant result in top 5
-- MRR@5 of **0.797** — first relevant result appears at position ~1.25 on average
-- Location accuracy: **96.7%** — city filter fires correctly across all 12 cities
-
 ## 📂 Project Structure
 
 ```bash
 RezRag/
-├── data/                    # Storage for pickle, parquet, and vectors
-├── config.py                # Centralized configuration
-├── pipeline.py              # Raw Data Preprocessing
-├── chunker.py               # Semantic Chunking
-├── embedder.py              # Vector & BM25 Generation
-├── ingestor.py              # Qdrant Ingestion
-├── retriever.py             # Hybrid Search, RRF, Reranker (FastAPI)
-├── generator.py             # Groq LLM + Prompt Builder (FastAPI)
-├── modal_retriever.py       # Modal serverless deployment — retriever
-├── modal_generator.py       # Modal serverless deployment — generator
-├── cache.py                 # diskcache query result cache
-├── observability.py         # Prometheus metrics + loguru logging
-├── food-rag/                # Next.js frontend
+├── data/                         # Vectors, parquet, and pickle artifacts
+├── ml_backend/
+│   ├── config.py                 # Centralized configuration
+│   ├── retriever.py              # Hybrid search, RRF, geo-filter (FastAPI)
+│   ├── generator.py              # Groq LLM + prompt builder (FastAPI)
+│   ├── cache.py                  # diskcache SQLite query result cache
+│   ├── observability.py          # Prometheus metrics + loguru logging
+│   └── evaluation.py             # Retrieval eval — MRR, Hit@K, bootstrap CI
+├── data_pipeline/
+│   ├── preprocessor.py           # Raw Yelp NDJSON filtering + scoring
+│   ├── chunker.py                # Tiktoken-bounded semantic chunking
+│   ├── embedder.py               # E5-large-v2 embeddings + BM25 index
+│   └── ingester.py               # Generator-based Qdrant ingestion
+├── deployment/
+│   ├── modal_retriever.py        # Modal serverless deployment — retriever
+│   └── modal_generator.py        # Modal serverless deployment — generator
+├── ui/
 │   └── src/
 │       ├── app/
-│       │   ├── page.tsx           # Main chat interface
-│       │   └── readme/page.tsx    # Live README renderer
+│       │   ├── page.tsx          # Main chat interface
+│       │   └── readme/page.tsx   # Live README renderer
 │       └── components/
-│           ├── MapPanel.tsx       # Leaflet map + marker interactions
+│           ├── MapPanel.tsx      # Leaflet map + marker interactions
 │           ├── RestaurantCard.tsx # Result cards with Maps/Yelp links
-│           └── TimingBar.tsx
+│           └── TimingBar.tsx     # Retrieval latency display
 └── requirements.txt
 
 ```
@@ -261,6 +305,93 @@ RezRag/
 
 
 ---
+
+## Phase 1: Data Ingestion Pipeline
+
+### Step 1: Preprocessing (`pipeline.py`)
+
+Cleans the raw Yelp JSON, calculates the custom "Restaurant Score" (), and filters the top ~200 restaurants per city to remove noise.
+
+```bash
+python pipeline.py
+
+```
+
+### Step 2: Semantic Chunking (`chunker.py`)
+
+Explodes the dataframe and creates semantic text chunks (Business Profiles, Positive Review Summaries, Negative Review Summaries). Uses `tiktoken` to ensure chunks fit within the embedding model's context window.
+
+```bash
+python chunker.py
+
+```
+
+### Step 3: Vectorization (`embedder.py`)
+
+Generates 1024-dimension dense vectors using E5-Large and builds the sparse BM25 index. Saves artifacts to disk as `.pt` (PyTorch Tensor) and `.parquet` files.
+
+```bash
+python embedder.py
+
+```
+
+### Step 4: Database Ingestion (`ingestor.py`)
+
+Streams the processed vectors and metadata into Qdrant. Uses **Python Generators** to yield batches of 256 points, ensuring RAM usage remains flat regardless of dataset size.
+
+```bash
+python ingestor.py
+
+```
+
+---
+
+## Phase 2: Running the Microservices Locally
+
+```bash
+uvicorn retriever:app --port 8000
+uvicorn generator:app --port 9000
+```
+
+**Service Status:**
+| Microservice | URL | Port | Role |
+| :--- | :--- | :--- | :--- |
+| **Retrieval** | `http://127.0.0.1:8000` | 8000 | Handles Hybrid Search, RRF Fusion, and Reranking. |
+| **Generator** | `http://127.0.0.1:9000` | 9000 | The main RAG Chat Interface. Streams LLM tokens. |
+
+---
+
+## 📡 API Reference
+
+### Chat / Generation Endpoint
+
+**POST** `http://127.0.0.1:9000/generate`
+
+This is the user-facing endpoint. returns a stream of **NDJSON** events.
+
+**Request:**
+
+```json
+{
+  "query": "Where can I find the best deep dish pizza?",
+  "city": "Chicago",
+  "top_k": 7
+}
+
+```
+
+**Response Stream (NDJSON):**
+The first event contains the retrieved sources, followed by the LLM tokens.
+
+```json
+{"type": "sources", "data": [{"name": "Giordano's", "address": "223 W Jackson Blvd", "lat": 41.87, "lon": -87.63}, ...]}
+{"type": "token", "data": "If"}
+{"type": "token", "data": " you're"}
+{"type": "token", "data": " looking"}
+{"type": "token", "data": " for"}
+...
+
+```
 
 ## 🚀 Installation & Setup
 
@@ -353,93 +484,6 @@ NEXT_PUBLIC_STADIA_API_KEY=your_stadia_key
 
 ---
 
-## Phase 1: Data Ingestion Pipeline
-
-### Step 1: Preprocessing (`pipeline.py`)
-
-Cleans the raw Yelp JSON, calculates the custom "Restaurant Score" (), and filters the top ~200 restaurants per city to remove noise.
-
-```bash
-python pipeline.py
-
-```
-
-### Step 2: Semantic Chunking (`chunker.py`)
-
-Explodes the dataframe and creates semantic text chunks (Business Profiles, Positive Review Summaries, Negative Review Summaries). Uses `tiktoken` to ensure chunks fit within the embedding model's context window.
-
-```bash
-python chunker.py
-
-```
-
-### Step 3: Vectorization (`embedder.py`)
-
-Generates 1024-dimension dense vectors using E5-Large and builds the sparse BM25 index. Saves artifacts to disk as `.pt` (PyTorch Tensor) and `.parquet` files.
-
-```bash
-python embedder.py
-
-```
-
-### Step 4: Database Ingestion (`ingestor.py`)
-
-Streams the processed vectors and metadata into Qdrant. Uses **Python Generators** to yield batches of 256 points, ensuring RAM usage remains flat regardless of dataset size.
-
-```bash
-python ingestor.py
-
-```
-
----
-
-## Phase 2: Running the Microservices Locally
-
-```bash
-uvicorn retriever:app --port 8000
-uvicorn generator:app --port 9000
-```
-
-**Service Status:**
-| Microservice | URL | Port | Role |
-| :--- | :--- | :--- | :--- |
-| **Retrieval** | `http://127.0.0.1:8000` | 8000 | Handles Hybrid Search, RRF Fusion, and Reranking. |
-| **Generator** | `http://127.0.0.1:9000` | 9000 | The main RAG Chat Interface. Streams LLM tokens. |
-
----
-
-## 📡 API Reference
-
-### Chat / Generation Endpoint
-
-**POST** `http://127.0.0.1:9000/generate`
-
-This is the user-facing endpoint. returns a stream of **NDJSON** events.
-
-**Request:**
-
-```json
-{
-  "query": "Where can I find the best deep dish pizza?",
-  "city": "Chicago",
-  "top_k": 7
-}
-
-```
-
-**Response Stream (NDJSON):**
-The first event contains the retrieved sources, followed by the LLM tokens.
-
-```json
-{"type": "sources", "data": [{"name": "Giordano's", "address": "223 W Jackson Blvd", "lat": 41.87, "lon": -87.63}, ...]}
-{"type": "token", "data": "If"}
-{"type": "token", "data": " you're"}
-{"type": "token", "data": " looking"}
-{"type": "token", "data": " for"}
-...
-
-```
-
 ### Retrieval Debug Endpoint
 
 **POST** `http://127.0.0.1:8000/retrieve`
@@ -458,5 +502,3 @@ Used to debug the search quality without waiting for the LLM generation.
 ```
 
 ---
-
-
