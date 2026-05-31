@@ -66,6 +66,8 @@ Python generators. RAM usage stays flat regardless of dataset size.
 
 ---
 
+## ⚙️ Under the Hood
+
 ### Streaming Filter Cascade (`preprocessor.py`)
 The review file contains millions of records. Loading it before filtering = 20GB RAM.
 Instead, three filters run at parse time ordered cheapest → most expensive:
@@ -115,7 +117,7 @@ E5-large-v2 (1024-dim) run over 50k+ chunks with:
 
 ---
 
-## Inference
+## 🧠 Inference
 
 **Local inference (offline mode)** — the Groq path is used in production, but a fully
 self-contained local generator is implemented for offline use. Loads
