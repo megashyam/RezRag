@@ -69,20 +69,20 @@ Python generators. RAM usage stays flat regardless of dataset size.
 ## ⚙️ Under the Hood
 
 ### Streaming Filter Cascade (`preprocessor.py`)
-The review file contains millions of records. Loading it before filtering = 20GB RAM.
-Instead, three filters run at parse time ordered cheapest → most expensive:
-1. **Business ID** — O(1) set lookup. Kills 95% of records instantly.
-2. **Date filter** — lexicographic ISO string compare. Free.
+The review file contains millions of records. Loading it before filtering occupies at least 20GB RAM.
+Instead, three filters run at parse time ordered by cheapest to expensive:
+1. **Business ID** — O(1) set lookup. Filters 95% of records instantly.
+2. **Date filter** — lexicographic ISO string compare.
 3. **Word count** — `text.split()` only runs on the survivors of (1) and (2).
 
 ### Composite Restaurant Scoring (`preprocessor.py`)
-Raw star ratings are statistically broken for ranking — 3 reviews at 5★ outranks
-2000 reviews at 4.7★ naively. Built a two-component weighted score:
+Raw star ratings are statistically broken for ranking; 3 reviews at 5★ outranks
+2000 reviews at 4.7★ naively. I Built a two-component weighted score:
 - `restaurant_score = stars × log1p(review_count)` — long-term reputation signal
 - `reviews_score = mean_stars × log1p(sum_stars)` — recent review quality
 
-Both Min-Max normalized before combining with tunable coefficients.
-City caps are adaptive — dense cities (600+ restaurants) get higher limits than sparse ones.
+Both are Min-Max normalized before combining with tunable coefficients.
+City caps are adaptive, dense cities (600+ restaurants) get higher limits than sparse ones.
 
 ### Balanced Sentiment Sampling (`pipeline.py`)
 Naive top-N sampling produces all 5-star reviews. The LLM then has no context
@@ -97,7 +97,7 @@ back to the expensive `tiktoken.encode()` call when the estimate is borderline �
 avoiding unnecessary tokenizer overhead across 50k+ chunks.
 
 ### Typed Chunk Structure (`chunker.py`)
-Chunks are not raw review dumps. Each restaurant produces structured chunk types:
+The chunks are not raw review blocks. Each restaurant produces structured chunk types:
 - **Business Profile** — name, location, category, hours
 - **Attribute chunks** — parsed from Yelp's nested stringified dicts (e.g. WiFi, parking, alcohol)
 - **Vibe chunks** — atmosphere descriptors extracted from nested attribute maps
