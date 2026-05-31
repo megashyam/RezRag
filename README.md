@@ -75,24 +75,24 @@ JSON files with no managed loaders, pre-processed datasets, or data APIs.
 ### Challenges solved:
 
 **1. Multi-file joins at scale** — `business.json` and `review.json` are separate 
-files joined by `business_id`. Processed in streaming fashion to avoid loading 
+files joined by `business_id`. I Processed in streaming fashion to avoid loading 
 gigabytes into RAM simultaneously.
 
-**2. Category filtering** — Yelp categories are free-text comma lists. Built a 
+**2. Category filtering** — Yelp categories are free-text comma lists.I Built a 
 keyword filter to isolate restaurants from the 1000+ other business types in the 
 dataset.
 
-**3. Custom Restaurant Score** — raw star ratings are unreliable (3 reviews at 5★ 
-outranks 2000 reviews at 4.7★). Built a weighted formula balancing rating, review 
+**3. Custom Restaurant Score** — raw star ratings are unreliable (3 reviews at 5
+outranks 2000 reviews at 4.7).I Built a weighted formula balancing rating, review 
 volume, and recency to surface genuinely high-quality restaurants.
 
 **4. Balanced sentiment sampling** — naive top-N sampling produces all 5-star 
 results. Sampled across sentiment buckets (positive/neutral/negative) so the 
-retriever has context on tradeoffs, wait times, and common complaints — not just 
+retriever has context on tradeoffs, wait times, and common complaints not just 
 hype.
 
 **5. Tiktoken-bounded chunking** — reviews range from 2 sentences to 20 paragraphs. 
-Character-based splitting breaks semantic coherence. Used tiktoken to bound chunks 
+Character-based splitting breaks semantic coherence.I Used tiktoken to bound chunks 
 by token count so every chunk fits cleanly within E5-large-v2's 512-token context 
 window.
 
