@@ -42,7 +42,7 @@ TOP_K = 30
 INITIAL_K = 30
 RRF_K = 60
 MAX_DUPLICATES = 1
-DO_RERANK = False
+DO_RERANK = True
 
 # Qdrant Configuration
 QDRANT_URL = os.getenv("QDRANT_URL")
