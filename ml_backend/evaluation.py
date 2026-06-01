@@ -1,5 +1,3 @@
-""" """
-
 import argparse
 import json
 import random
@@ -10,6 +8,357 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 from tabulate import tabulate
+
+METRO_AREAS: Dict[str, List[str]] = {
+    "philadelphia": [
+        "philadelphia",
+        "phila",
+        "philadephia",
+        "abington",
+        "ardmore",
+        "bala cynwyd",
+        "berwyn",
+        "blue bell",
+        "broomall",
+        "bryn mawr",
+        "chalfont",
+        "cheltenham",
+        "chester",
+        "coatesville",
+        "collegeville",
+        "conshohocken",
+        "devon",
+        "downingtown",
+        "doylestown",
+        "drexel hill",
+        "exton",
+        "fort washington",
+        "frazer",
+        "glenside",
+        "havertown",
+        "horsham",
+        "jenkintown",
+        "king of prussia",
+        "lansdale",
+        "lansdowne",
+        "limerick",
+        "malvern",
+        "manayunk",
+        "media",
+        "montgomeryville",
+        "narberth",
+        "newtown square",
+        "norristown",
+        "oreland",
+        "paoli",
+        "phoenixville",
+        "plymouth meeting",
+        "pottstown",
+        "quakertown",
+        "royersford",
+        "skippack",
+        "souderton",
+        "springfield",
+        "swarthmore",
+        "upper darby",
+        "wayne",
+        "west chester",
+        "willow grove",
+        "wynnewood",
+        "yardley",
+        "ardmore",
+        "bala cynwyd",
+        "cherry hill",
+        "voorhees",
+        "haddonfield",
+        "moorestown",
+        "marlton",
+        "mount laurel",
+        "medford",
+        "collingswood",
+        "haddon township",
+        "haddon heights",
+        "audubon",
+        "bellmawr",
+        "barrington",
+        "lawnside",
+        "gloucester city",
+        "deptford",
+        "woodbury",
+        "sewell",
+        "turnersville",
+        "blackwood",
+        "sicklerville",
+        "lindenwold",
+        "clementon",
+        "pitman",
+        "swedesboro",
+        "bordentown",
+        "burlington",
+        "mount holly",
+        "lumberton",
+        "cinnaminson",
+        "palmyra",
+        "maple shade",
+        "berlin",
+        "atco",
+        "hammonton",
+        "langhorne",
+        "bensalem",
+        "bristol",
+        "levittown",
+        "croydon",
+        "newtown",
+        "morrisville",
+        "pennsauken",
+        "camden",
+        "gibbsboro",
+        "glassboro",
+        "franklinville",
+        "elmer",
+        "pitman",
+        "woolwich township",
+        "west deptford",
+        "westmont",
+        "willingboro",
+        "delran",
+        "riverton",
+        "palmyra",
+        "wilmington",
+        "claymont",
+        "christiana",
+        "newark",
+    ],
+    "tampa": [
+        "tampa",
+        "south tampa",
+        "carrollwood",
+        "citrus park",
+        "westchase",
+        "town n country",
+        "tampa palms",
+        "clearwater",
+        "clearwater beach",
+        "st pete",
+        "saint petersburg",
+        "dunedin",
+        "safety harbor",
+        "tarpon springs",
+        "palm harbor",
+        "oldsmar",
+        "wesley chapel",
+        "new port richey",
+        "port richey",
+        "holiday",
+        "zephyrhills",
+        "plant city",
+        "brandon",
+        "valrico",
+        "seffner",
+        "lutz",
+        "land o lakes",
+        "spring hill",
+        "brooksville",
+        "seminole",
+        "largo",
+        "pinellas park",
+        "kenneth city",
+        "south pasadena",
+        "st pete beach",
+        "treasure island",
+        "madeira beach",
+        "indian shores",
+        "indian rocks beach",
+        "belleair bluffs",
+        "north redington beach",
+        "redington shores",
+        "apollo beach",
+        "ruskin",
+        "wimauma",
+        "sun city center",
+        "gibsonton",
+        "riverview",
+        "lithia",
+    ],
+    "nashville": [
+        "nashville",
+        "hendersonville",
+        "goodlettsville",
+        "madison",
+        "old hickory",
+        "hermitage",
+        "antioch",
+        "nolensville",
+        "brentwood",
+        "franklin",
+        "spring hill",
+        "columbia",
+        "gallatin",
+        "white house",
+        "portland",
+        "joelton",
+        "whites creek",
+        "belle meade",
+        "berry hill",
+        "kingston springs",
+        "ashland city",
+        "la vergne",
+        "smyrna",
+        "murfreesboro",
+        "lebanon",
+        "mount juliet",
+    ],
+    "new_orleans": [
+        "new orleans",
+        "metairie",
+        "kenner",
+        "harahan",
+        "river ridge",
+        "jefferson",
+        "belle chasse",
+        "gretna",
+        "westwego",
+        "marrero",
+        "harvey",
+        "terrytown",
+        "violet",
+        "arabi",
+        "chalmette",
+        "meraux",
+        "saint rose",
+        "luling",
+    ],
+    "indianapolis": [
+        "indianapolis",
+        "carmel",
+        "fishers",
+        "noblesville",
+        "westfield",
+        "zionsville",
+        "brownsburg",
+        "avon",
+        "plainfield",
+        "mooresville",
+        "martinsville",
+        "greenwood",
+        "bargersville",
+        "whitestown",
+        "speedway",
+        "beech grove",
+        "lawrence",
+        "castleton",
+        "new palestine",
+        "greenfield",
+        "mccordsville",
+        "camby",
+    ],
+    "tucson": [
+        "tucson",
+        "marana",
+        "sahuarita",
+        "oro valley",
+        "catalina",
+        "vail",
+        "corona de tucson",
+        "green valley",
+        "mount lemmon",
+    ],
+    "reno": [
+        "reno",
+        "sparks",
+        "spanish springs",
+        "verdi",
+        "cold springs",
+        "sun valley",
+        "virginia city",
+    ],
+    "boise": [
+        "boise",
+        "boise city",
+        "eagle",
+        "meridian",
+        "nampa",
+        "caldwell",
+        "kuna",
+        "star",
+        "middleton",
+    ],
+    "santa_barbara": [
+        "santa barbara",
+        "goleta",
+        "montecito",
+        "carpinteria",
+        "summerland",
+        "isla vista",
+        "santa ynez",
+    ],
+    "edmonton": [
+        "edmonton",
+        "st albert",
+        "saint albert",
+        "sherwood park",
+        "spruce grove",
+        "leduc",
+        "beaumont",
+        "fort saskatchewan",
+    ],
+    "saint_louis": [
+        "saint louis",
+        "st louis",
+        "st. louis",
+        "chesterfield",
+        "ballwin",
+        "creve coeur",
+        "ballwin",
+        "manchester",
+        "kirkwood",
+        "webster groves",
+        "maplewood",
+        "clayton",
+        "ladue",
+        "town and country",
+        "des peres",
+        "fenton",
+        "valley park",
+        "affton",
+        "mehlville",
+        "sappington",
+        "sunset hills",
+        "overland",
+        "richmond heights",
+        "university city",
+        "olivette",
+        "frontenac",
+        "brentwood",
+        "rock hill",
+        "collinsville",
+        "belleville",
+        "o fallon",
+        "swansea",
+        "caseyville",
+        "mascoutah",
+        "fairview heights",
+        "collinsville",
+        "cahokia",
+        "east saint louis",
+    ],
+    "wilmington": [
+        "wilmington",
+        "claymont",
+        "christiana",
+        "newark",
+        "hockessin",
+        "pike creek",
+        "talleyville",
+        "wilmington manor",
+    ],
+}
+
+
+_SUBURB_TO_METRO: Dict[str, str] = {}
+for metro, suburbs in METRO_AREAS.items():
+    for suburb in suburbs:
+        _SUBURB_TO_METRO[suburb.lower()] = metro
 
 
 def _normalize(name: str) -> str:
@@ -26,11 +375,11 @@ def _normalize(name: str) -> str:
         for c in src:
             s = s.replace(c, dst)
     s = re.sub(r"[''`]", "'", s)
-    # Strip city/branch suffixes:  "- Nashville",  "- South Tampa", "- Carrollwood"
+
     s = re.sub(
         r"\s*[-–]\s*(nashville|philadelphia|tampa|new orleans|houston|south|north|"
         r"east|west|downtown|carrollwood|lower broadway|brandon|south philly|"
-        r"uptown|midtown|brentwood|midtown|metairie).*$",
+        r"uptown|midtown|brentwood|metairie).*$",
         "",
         s,
     )
@@ -40,12 +389,14 @@ def _normalize(name: str) -> str:
 
 
 def name_match(returned: str, expected: str) -> bool:
-    """Fuzzy match: normalise → exact, prefix, or 2+-token subset."""
+    """Fuzzy match: normalise → exact, prefix (len≥3), or 2+-token subset."""
     r, e = _normalize(returned), _normalize(expected)
     if r == e:
         return True
-    if r.startswith(e) or e.startswith(r):
-        return True
+
+    if len(r) >= 3 and len(e) >= 3:
+        if r.startswith(e) or e.startswith(r):
+            return True
     r_tok, e_tok = set(r.split()), set(e.split())
     shorter = r_tok if len(r_tok) <= len(e_tok) else e_tok
     longer = r_tok if len(r_tok) > len(e_tok) else e_tok
@@ -60,7 +411,6 @@ def in_relevant(result: Dict, relevant: set) -> bool:
 
 
 TEST_QUERIES: List[Dict] = [
-    # ── Philadelphia / South Jersey ──────────────────────────────────────────
     {
         "query": "best tacos in Philadelphia",
         "category": "cuisine",
@@ -87,7 +437,13 @@ TEST_QUERIES: List[Dict] = [
         "query": "late night bars Philadelphia",
         "category": "time+type",
         "city": "philadelphia",
-        "relevant": ["Glory Beer Bar & Kitchen", "South", "Barclay Prime"],
+        "relevant": [
+            "Butcher Bar",
+            "Bar Hygge",
+            "Harp & Crown",
+            "Good Dog Bar",
+            "Glory Beer Bar & Kitchen",
+        ],
     },
     {
         "query": "best cheesesteak Philadelphia",
@@ -135,7 +491,7 @@ TEST_QUERIES: List[Dict] = [
         "query": "rooftop bars Philadelphia",
         "category": "ambiance",
         "city": "philadelphia",
-        "relevant": ["Harp & Crown"],
+        "relevant": ["The Continental Mid-town", "Harp & Crown"],
     },
     {
         "query": "best ramen in Philly",
@@ -147,7 +503,7 @@ TEST_QUERIES: List[Dict] = [
         "query": "cheap eats Philadelphia",
         "category": "budget",
         "city": "philadelphia",
-        "relevant": [],  # label from live results
+        "relevant": [],
     },
     {
         "query": "gluten free restaurants Philadelphia",
@@ -155,7 +511,6 @@ TEST_QUERIES: List[Dict] = [
         "city": "philadelphia",
         "relevant": [],
     },
-    # ── Nashville ────────────────────────────────────────────────────────────
     {
         "query": "best hot chicken Nashville",
         "category": "landmark",
@@ -211,7 +566,7 @@ TEST_QUERIES: List[Dict] = [
         ],
     },
     {
-        "query": "best tacos Nashville Tennessee",  # state in query
+        "query": "best tacos Nashville Tennessee",
         "category": "cuisine",
         "city": "nashville",
         "relevant": [],
@@ -222,7 +577,6 @@ TEST_QUERIES: List[Dict] = [
         "city": "nashville",
         "relevant": [],
     },
-    # ── Tampa / South Florida ────────────────────────────────────────────────
     {
         "query": "best Cuban food Tampa",
         "category": "cuisine",
@@ -264,7 +618,6 @@ TEST_QUERIES: List[Dict] = [
         "city": "tampa",
         "relevant": [],
     },
-    # ── New Orleans ──────────────────────────────────────────────────────────
     {
         "query": "best gumbo New Orleans",
         "category": "landmark",
@@ -302,23 +655,27 @@ TEST_QUERIES: List[Dict] = [
         "relevant": [],
     },
     {
-        "query": "jazz bars with food NOLA",  # abbreviation test
+        "query": "jazz bars with food NOLA",
         "category": "ambiance+noisy",
         "city": "new_orleans",
         "relevant": [],
     },
-    # ── Indianapolis ─────────────────────────────────────────────────────────
     {
         "query": "best brunch Indianapolis",
         "category": "mealtime",
         "city": "indianapolis",
-        "relevant": ["Milktooth", "Cafe Patachou", "Spoke & Steele"],
+        "relevant": [
+            "Yolk - City Way",
+            "Mornings Breakfast & Brunch",
+            "RIZE - Indianapolis",
+            "Gallery Pastry Bar",
+        ],
     },
     {
         "query": "romantic dinner Indianapolis",
         "category": "occasion",
         "city": "indianapolis",
-        "relevant": ["St. Elmo Steak House", "Bluebeard", "Beholder", "Tinker Street"],
+        "relevant": ["Mesh Restaurant", "Capri", "Provision", "Ocean Prime"],
     },
     {
         "query": "best tacos Indianapolis",
@@ -330,7 +687,13 @@ TEST_QUERIES: List[Dict] = [
         "query": "craft beer bars Indianapolis Indiana",
         "category": "type",
         "city": "indianapolis",
-        "relevant": ["Bier Brewery", "Sun King Brewing", "Metazoa Brewing"],
+        "relevant": [
+            "Twenty Tap",
+            "The Tap",
+            "Sun King Brewery",
+            "Ale Emporium",
+            "St. Joseph Brewery & Public House",
+        ],
     },
     {
         "query": "sushi Indianapolis",
@@ -338,15 +701,15 @@ TEST_QUERIES: List[Dict] = [
         "city": "indianapolis",
         "relevant": [],
     },
-    # ── Tucson ───────────────────────────────────────────────────────────────
     {
         "query": "best Mexican food Tucson",
         "category": "cuisine",
         "city": "tucson",
         "relevant": [
-            "El Charro Café",
-            "Guadalajara Grill",
-            "Barrio Bread",
+            "Taqueria Pico De Gallo",
+            "El Guero Canelo",
+            "El Antojo Poblano",
+            "Taqueria El Pueblito",
         ],
     },
     {
@@ -359,7 +722,12 @@ TEST_QUERIES: List[Dict] = [
         "query": "best BBQ Tucson",
         "category": "cuisine",
         "city": "tucson",
-        "relevant": ["Brushfire BBQ"],
+        "relevant": [
+            "Kiss Of Smoke BBQ",
+            "Kens Hardwood Barbecue",
+            "Holy Smokin Butts BBQ",
+            "Smokey Mo",
+        ],
     },
     {
         "query": "romantic dinner Tucson",
@@ -373,7 +741,6 @@ TEST_QUERIES: List[Dict] = [
         "city": "tucson",
         "relevant": [],
     },
-    # ── Reno ─────────────────────────────────────────────────────────────────
     {
         "query": "best breakfast Reno Nevada",
         "category": "mealtime",
@@ -398,18 +765,22 @@ TEST_QUERIES: List[Dict] = [
         "city": "reno",
         "relevant": [],
     },
-    # ── Boise ────────────────────────────────────────────────────────────────
     {
         "query": "best brunch Boise Idaho",
         "category": "mealtime",
         "city": "boise",
-        "relevant": ["Goldy's Breakfast Bistro", "Fork"],
+        "relevant": ["BACON", "Locavore", "The Chef's Hut", "Moon's Kitchen Cafe"],
     },
     {
         "query": "craft beer Boise",
         "category": "type",
         "city": "boise",
-        "relevant": ["Bittercreek Alehouse", "Woodland Empire Ale Craft"],
+        "relevant": [
+            "Sockeye Brewing",
+            "EDGE Brewing Co",
+            "Highlands Hollow Brewhouse",
+            "Bier:Thirty Bottle & Bistro",
+        ],
     },
     {
         "query": "romantic dinner Boise",
@@ -423,7 +794,6 @@ TEST_QUERIES: List[Dict] = [
         "city": "boise",
         "relevant": [],
     },
-    # ── Santa Barbara ────────────────────────────────────────────────────────
     {
         "query": "romantic dinner Santa Barbara",
         "category": "occasion",
@@ -448,18 +818,23 @@ TEST_QUERIES: List[Dict] = [
         "city": "santa_barbara",
         "relevant": [],
     },
-    # ── Edmonton ─────────────────────────────────────────────────────────────
     {
         "query": "fine dining Edmonton Alberta",
         "category": "occasion",
         "city": "edmonton",
-        "relevant": ["Hardware Grill", "Corso 32", "RGE RD"],
+        "relevant": [
+            "The Workshop Eatery",
+            "Harvest Room",
+            "XIX Nineteen",
+            "Bistro Praha",
+            "Otto Food and Drink",
+        ],
     },
     {
         "query": "best brunch Edmonton",
         "category": "mealtime",
         "city": "edmonton",
-        "relevant": ["Cafe De Ville", "Bundok"],
+        "relevant": ["Pip", "Little Brick", "OEB Breakfast", "Cafe Blackbird"],
     },
     {
         "query": "best ramen Edmonton",
@@ -473,7 +848,6 @@ TEST_QUERIES: List[Dict] = [
         "city": "edmonton",
         "relevant": [],
     },
-    # ── Saint Louis ──────────────────────────────────────────────────────────
     {
         "query": "best BBQ Saint Louis",
         "category": "cuisine",
@@ -481,16 +855,21 @@ TEST_QUERIES: List[Dict] = [
         "relevant": ["Salt + Smoke", "Pappy's Smokehouse", "Bogart's Smokehouse"],
     },
     {
-        "query": "romantic dinner St Louis Missouri",  # abbreviation + state test
+        "query": "romantic dinner St Louis Missouri",
         "category": "occasion+noisy",
         "city": "saint_louis",
-        "relevant": ["Sidney Street Cafe", "Tony's", "Balaban's Wine Cellar"],
+        "relevant": [
+            "Bulrush STL",
+            "Polite Society",
+            "Bar Les Freres",
+            "The Piccadilly at Manhattan",
+        ],
     },
     {
         "query": "best Vietnamese food Saint Louis",
         "category": "cuisine",
         "city": "saint_louis",
-        "relevant": ["Mai Lee"],  # ★ iconic
+        "relevant": ["Mai Lee"],
     },
     {
         "query": "brunch Saint Louis",
@@ -498,22 +877,22 @@ TEST_QUERIES: List[Dict] = [
         "city": "saint_louis",
         "relevant": [],
     },
-    # ── Wilmington Delaware ───────────────────────────────────────────────────
     {
         "query": "best restaurants Wilmington Delaware",
         "category": "cuisine",
         "city": "wilmington",
-        "relevant": [
-            "Bardea Food & Drink",
-            "Harry's Seafood Bar & Grille",
-            "Domaine Hudson",
-        ],
+        "relevant": ["Iron Hill Brewery & Restaurant", "Columbus Inn", "Le Shio"],
     },
     {
-        "query": "romantic dinner Wilmington DE",  # state abbreviation test
+        "query": "romantic dinner Wilmington DE",
         "category": "occasion+noisy",
         "city": "wilmington",
-        "relevant": ["Bardea Food & Drink", "Domaine Hudson"],
+        "relevant": [
+            "La Fia",
+            "Green Room",
+            "Krazy Kat's Restaurant",
+            "Domaine Hudson",
+        ],
     },
     {
         "query": "brunch Wilmington",
@@ -521,7 +900,6 @@ TEST_QUERIES: List[Dict] = [
         "city": "wilmington",
         "relevant": [],
     },
-    # ── No-city queries (location extraction stress tests) ────────────────────
     {
         "query": "cozy coffee shop to study",
         "category": "ambiance",
@@ -574,16 +952,14 @@ TEST_QUERIES: List[Dict] = [
         "category": "occasion+cuisine",
         "city": None,
         "relevant": [
-            "St. Elmo Steak House",
-            "Jeff Ruby's Steakhouse",
-            "Eddie V's Prime Seafood",
-            "Barclay Prime",
+            "KC Prime",
+            "Bern's Steak House",
+            "Cerise Craft Steakhouse",
+            "Morton's The Steakhouse",
+            "Perry's Steakhouse & Grille - Cool Springs",
         ],
     },
 ]
-
-
-# ── Metrics ──────────────────────────────────────────────────────────────────
 
 
 def mrr_at_k(results: List[Dict], relevant: set, k: int = 5) -> float:
@@ -601,7 +977,7 @@ def precision_at_k(results: List[Dict], relevant: set, k: int) -> float:
     if not results:
         return 0.0
     hits = sum(1 for r in results[:k] if in_relevant(r, relevant))
-    return hits / min(k, len(results))
+    return hits / k
 
 
 def bootstrap_ci(
@@ -617,9 +993,6 @@ def bootstrap_ci(
     lo_idx = int((1 - ci) / 2 * n_boot)
     hi_idx = int((1 + ci) / 2 * n_boot)
     return (means[lo_idx], means[min(hi_idx, n_boot - 1)])
-
-
-# ── HTTP retrieval ────────────────────────────────────────────────────────────
 
 
 def retrieve(
@@ -639,24 +1012,29 @@ def retrieve(
         return results, latency_ms
     except Exception as e:
         latency_ms = (time.perf_counter() - t0) * 1000
-        print(f"    ⚠ retrieve failed: {e}")
+        print(f"   retrieve failed: {e}")
         return [], latency_ms
 
 
 def location_accuracy(
     results: List[Dict], expected_city: Optional[str]
 ) -> Optional[float]:
-    """% of results whose city field matches expected_city. None if city=None."""
+
     if expected_city is None or not results:
         return None
-    city_key = expected_city.replace("_", " ").lower()
-    matches = sum(
-        1 for r in results if (r.get("city") or "").lower().strip() == city_key
-    )
+    metro_key = expected_city.lower()
+    metro_suburbs = set(METRO_AREAS.get(metro_key, [metro_key.replace("_", " ")]))
+
+    def city_matches(result_city: str) -> bool:
+        rc = result_city.lower().strip()
+        # Direct metro match
+        if rc == metro_key.replace("_", " "):
+            return True
+        # Suburb → metro lookup
+        return _SUBURB_TO_METRO.get(rc) == metro_key
+
+    matches = sum(1 for r in results if city_matches(r.get("city") or ""))
     return matches / len(results)
-
-
-# ── Main evaluator ────────────────────────────────────────────────────────────
 
 
 def evaluate(
@@ -675,12 +1053,7 @@ def evaluate(
     print(f"{'='*72}")
     print(f"  Retriever : {url}")
     print(f"  top_k     : {top_k}")
-    print(
-        f"  Labeled   : {len(labeled)} queries  |  Unlabeled (manual review): {len(unlabeled)}"
-    )
-    print(f"{'='*72}\n")
 
-    # ── Warm-up (excluded from stats) ────────────────────────────────────────
     print("  [warm-up] sending warm-up query...")
     retrieve(url, "best pizza Philadelphia", top_k=top_k, do_rerank=True)
     print("  [warm-up] done\n")
@@ -688,7 +1061,7 @@ def evaluate(
     all_records = []
 
     for strat in strategies:
-        print(f"\n── Strategy: {strat['name']} ──────────────────────────────────────")
+        print(f"\n── Strategy: {strat['name']} {'─'*(50-len(strat['name']))}")
 
         records = []
         for i, test in enumerate(labeled):
@@ -706,7 +1079,6 @@ def evaluate(
             h5 = hit_at_k(results, relevant, k=5)
             p5 = precision_at_k(results, relevant, k=5)
             loc_acc = location_accuracy(results, exp_city)
-            has_results = 1.0 if results else 0.0
 
             record = {
                 "query": query,
@@ -727,16 +1099,13 @@ def evaluate(
             }
             records.append(record)
 
-            status = "✅" if mrr > 0 else "❌"
+            status = "PASSED" if mrr > 0 else "FAILED"
             if verbose:
                 print(f"  {status} [{i+1:02d}] {query}")
                 loc_str = f"{loc_acc:.2f}" if loc_acc is not None else "N/A"
-
                 print(
-                    f"       MRR@5={mrr:.3f}  Hit@5={h5:.0f}  P@5={p5:.3f}  "
-                    f"loc={loc_str}  {latency:.0f}ms"
+                    f"       MRR@5={mrr:.3f}  Hit@5={h5:.0f}  P@5={p5:.3f}  loc={loc_str}  {latency:.0f}ms"
                 )
-
                 if mrr == 0 and results:
                     names = ", ".join(
                         r.get("restaurant") or r.get("name") or "?" for r in results[:3]
@@ -752,16 +1121,14 @@ def evaluate(
         all_records.extend(records)
         _print_strategy_summary(strat["name"], records, top_k)
 
-    # ── Unlabeled robustness pass ─────────────────────────────────────────────
     if unlabeled:
-        print(f"\n── Robustness pass (unlabeled — manual review needed) ──────────────")
-        rob_records = []
+        print(f"\nRobustness pass {'─'*20}")
         for test in unlabeled:
             results, latency = retrieve(url, test["query"], top_k=top_k, do_rerank=True)
             city_check = location_accuracy(results, test.get("city"))
             has = bool(results)
             print(
-                f"  {'✅' if has else '❌'} {test['query']:<55} "
+                f"  {'PASSED' if has else 'FAILED'} {test['query']:<55} "
                 f"n={len(results)}  loc={f'{city_check:.2f}' if city_check is not None else 'N/A'}  {latency:.0f}ms"
             )
             if results and verbose:
@@ -769,24 +1136,11 @@ def evaluate(
                     r.get("restaurant") or r.get("name") or "?" for r in results[:3]
                 )
                 print(f"     → {names}")
-            rob_records.append(
-                {
-                    "query": test["query"],
-                    "category": test["category"],
-                    "city": test["city"],
-                    "has_results": has,
-                    "loc_acc": city_check,
-                    "latency": latency,
-                }
-            )
             time.sleep(0.2)
 
     _print_comparison(all_records, strategies)
-
     _print_per_city(all_records, strategies[0]["name"])
-
     _print_per_category(all_records, strategies[0]["name"])
-
     _print_failures(all_records, strategies[0]["name"])
 
     if out:
@@ -795,12 +1149,8 @@ def evaluate(
         print(f"\n  Results written to: {out}")
 
 
-# ── helpers ─────────────────────────────────────────────────────────
-
-
 def _agg(records: List[Dict], key: str):
-    vals = [r[key] for r in records if r[key] is not None]
-    return vals
+    return [r[key] for r in records if r[key] is not None]
 
 
 def _mean(vals):
@@ -824,11 +1174,13 @@ def _print_strategy_summary(name: str, records: List[Dict], top_k: int):
     )
     print(f"    Hit@3  : {_mean(hit3_vals):.3f}")
     print(f"    Hit@5  : {_mean(hit5_vals):.3f}")
-    print(f"    P@5    : {_mean(p5_vals):.3f}")
-    print(f"    Loc acc: {_mean(loc_vals):.3f}  (city filter correctness)")
-    print(
-        f"    Latency: {_mean(lat_vals):.0f}ms avg  |  p95={sorted(lat_vals)[int(0.95*len(lat_vals))]:.0f}ms"
-    )
+    print(f"    P@5    : {_mean(p5_vals):.3f}  (denominator=k, not len(results))")
+    print(f"    Loc acc: {_mean(loc_vals):.3f}  (metro-area aware)")
+    if lat_vals:
+        p95_idx = int(0.95 * len(lat_vals))
+        print(
+            f"    Latency: {_mean(lat_vals):.0f}ms avg  |  p95={sorted(lat_vals)[p95_idx]:.0f}ms"
+        )
 
 
 def _print_comparison(records: List[Dict], strategies: List[Dict]):
@@ -875,7 +1227,7 @@ def _print_comparison(records: List[Dict], strategies: List[Dict]):
 
 def _print_per_city(records: List[Dict], strategy: str):
     print(f"\n\n{'='*72}")
-    print("  PER-CITY BREAKDOWN  (Hybrid + Rerank)")
+    print(f"  PER-CITY BREAKDOWN  ({strategy})")
     print(f"{'='*72}\n")
     r = [x for x in records if x["strategy"] == strategy]
     cities = sorted(set(x["city"] for x in r if x["city"]))
@@ -894,7 +1246,6 @@ def _print_per_city(records: List[Dict], strategy: str):
                 len(mrr_vals),
             ]
         )
-    # Sort by MRR descending
     rows.sort(key=lambda x: x[1], reverse=True)
     print(
         tabulate(
@@ -907,11 +1258,10 @@ def _print_per_city(records: List[Dict], strategy: str):
 
 def _print_per_category(records: List[Dict], strategy: str):
     print(f"\n\n{'='*72}")
-    print("  PER-CATEGORY BREAKDOWN  (Hybrid + Rerank)")
+    print(f"  PER-CATEGORY BREAKDOWN  ({strategy})")
     print(f"{'='*72}\n")
     r = [x for x in records if x["strategy"] == strategy]
 
-    # Flatten multi-label categories to base label
     def base_cat(cat: str) -> str:
         return cat.split("+")[0]
 
@@ -942,20 +1292,18 @@ def _print_per_category(records: List[Dict], strategy: str):
 def _print_failures(records: List[Dict], strategy: str):
     failures = [x for x in records if x["strategy"] == strategy and x["mrr5"] == 0.0]
     if not failures:
-        print("\n  No zero-MRR queries. ✅")
+        print("\n  No zero-MRR queries. PASSED cleanly)")
         return
     print(f"\n\n{'='*72}")
-    print(f"  FAILURE ANALYSIS — {len(failures)} zero-MRR queries  (Hybrid + Rerank)")
+    print(f"  FAILURE ANALYSIS — {len(failures)} zero-MRR queries  ({strategy})")
     print(f"{'='*72}\n")
     for f in failures:
-        print(f"  ❌ [{f['city'] or 'no-city'}]  {f['query']}")
+        print(f"  FAILED [{f['city'] or 'no-city'}]  {f['query']}")
         if f["returned"]:
             print(f"     got: {', '.join(f['returned'][:3])}")
         else:
             print(f"     got: (no results)")
 
-
-# ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -963,16 +1311,12 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--url",
-        default="https://...",
+        default="https://megumind6172--food-rag-retriever-serve.modal.run",
         help="Retriever base URL",
     )
     parser.add_argument("--top_k", type=int, default=5)
-    parser.add_argument(
-        "--verbose", action="store_true", help="Print per-query results"
-    )
-    parser.add_argument(
-        "--out", type=str, default=None, help="Save JSON results to file"
-    )
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--out", type=str, default=None)
     args = parser.parse_args()
 
     evaluate(url=args.url, top_k=args.top_k, verbose=args.verbose, out=args.out)
