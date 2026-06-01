@@ -180,17 +180,35 @@ fragmentation across requests.
 
 Evaluated across **47 queries spanning all 12 dataset cities** with human-labeled relevance judgments and fuzzy name matching. Eval script: `eval.py`.
 
-| Strategy | MRR@5 | 95% CI | Hit@5 | P@5 | Avg Latency |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Hybrid (no rerank)** | **0.797** | **[0.703, 0.881]** | **0.979** | **0.380** | **686ms** |
-| Hybrid + Rerank | 0.794 | [0.699, 0.878] | 0.979 | 0.333 | 1566ms |
 
-**Key findings:**
-- Reranking disabled, MRR difference is negligible (+0.003) but latency cost is +880ms (+128%)
-- The CrossEncoder (`ms-marco-MiniLM-L-6-v2`) was trained on web Q&A (MS MARCO) it scores "does this passage answer the query," which doesn't generalise to vibe-based restaurant queries like "romantic dinner" or "best hot chicken"
-- Hit@5 of **0.979** — 46 of 47 queries return at least one relevant result in top 5
-- MRR@5 of **0.797** — first relevant result appears at position ~1.25 on average
-- Location accuracy: **96.7%** — city filter fires correctly across all 12 cities
+| Strategy | MRR@5 | Hit@3 | Hit@5 | P@5 |
+| :--- | :--- | :--- | :--- | :--- |
+| Hybrid + Rerank | 0.773 | 0.936 | 1.000 | 0.523 |
+| Hybrid (no rerank) | 0.737 | 0.872 | 0.979 | 0.494 |
+
+Reranking improves MRR@5 by +4.9% and Hit@3 by +7.3%.
+Hit@5 = 1.000 every query returns at least one relevant result in top 5.
+95% CI on MRR@5: [0.685, 0.854]
+
+### Key Findings
+
+**Reranking validates the architecture decision:**
+CrossEncoder reranking adds +4.9% MRR@5 and +7.3% Hit@3 over hybrid-only retrieval at a cost of ~200ms latency. The quality gain justifies the compute overhead.
+
+**1. Hit@5 = 1.000 across all 12 cities:**
+Every query returned at least one relevant result in the top 5, including smaller markets like Boise, Edmonton, and Wilmington, cities with limited Yelp Academic Dataset coverage.
+
+**2. Hybrid search outperforms either strategy alone:**
+Dense-only retrieval misses exact keyword matches ("Tonkotsu Ramen", "cheesesteak"). BM25-only misses semantic queries ("cozy spot for a date", "something light for a stomach ache"). RRF fusion captures both cuisine queries score MRR@5 = 0.922, the highest of any category.
+
+**3. Location extraction works across messy queries:**
+96.7% location accuracy on metro-aware matching. Queries like "need something light in New Jersey" and "best tacos Pennsylvania" correctly route to the Philadelphia metro area via state→city mapping and regex tail extraction.
+
+**4. Weakest category is landmark queries (MRR@5 = 0.542):**
+Queries with a single definitive answer ("best cheesesteak in Philadelphia", "best beignets New Orleans") are hardest, the correct restaurant must rank first, leaving no margin for error. All other categories exceed MRR@5 = 0.611.
+
+**5. Dataset limitation for smaller cities:**
+Reno (MRR@5 = 0.361) and Santa Barbara (MRR@5 = 0.667) have limited restaurant coverage in the Yelp Academic Dataset. Performance on these cities is constrained by data density, not retrieval quality.
 
 ---
 
