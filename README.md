@@ -35,6 +35,11 @@ Retriever Microservice (FastAPI)
     → CrossEncoder reranking
          ↓
 Generator Microservice (FastAPI)
+    → Intent Classification (llama-3.1-8b-instant via Groq)
+         ↓ food_search / location_only → proceed
+         ↓ greeting / identity / off_topic → short-circuit, no retrieval
+    → Coverage Guard (COVERED_AREAS / OUT_OF_COVERAGE blocklists)
+         ↓ out-of-coverage → short-circuit, no retrieval
     → Groq API (Qwen3-32B, production)
     → Local Qwen2.5-3B NF4 (offline mode)
          ↓
@@ -128,6 +133,32 @@ rrf_score = 1/(k + vec_rank) + 1/(k + bm25_rank)    k=60
 
 ### Location Extraction
 spaCy NER extracts city/state from queries. Fallback dictionary matching handles abbreviations ("Philly" -> Philadelphia, "NOLA" -> New Orleans) and state→city routing ("Pennsylvania" -> Philadelphia metro).
+
+---
+
+## Query Routing
+
+Before any retrieval occurs, every query passes through two filtering layers:
+
+### Intent Classification
+`llama-3.1-8b-instant` via Groq classifies the query (~200ms) into one of:
+
+| Intent | Action |
+|:---|:---|
+| `food_search` | Proceed to coverage check + retrieval |
+| `location_only` | Proceed to retrieval with geo filter |
+| `greeting` | Return intro message, skip retrieval |
+| `identity` | Return RezRag description, skip retrieval |
+| `off_topic` | Return redirect message, skip retrieval |
+
+
+### Coverage Guard (Two Layers)
+Out-of-coverage cities are blocked before retrieval at two independent points:
+
+- **Generator-level** — `is_out_of_coverage()` checks the query against `COVERED_AREAS` / `OUT_OF_COVERAGE` lists before calling the retriever
+- **Retriever-level** — `_detect_raw_location()` catches anything that slips through, returns `out_of_coverage: true` with empty results so irrelevant source cards never appear in the UI
+
+Both layers use raw location detection (NER + regex) that is **not** filtered against the dataset so an unknown city like "Athens" is detected and blocked rather than silently returning unfiltered results from other cities.
 
 ---
 
