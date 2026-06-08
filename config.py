@@ -66,6 +66,7 @@ E5_URL = os.environ.get("E5_URL")
 # Groq Configuration
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL_ID = "qwen/qwen3-32b"
+GROQ_INTENT_MODEL = "llama-3.1-8b-instant"
 
 # Model Configuration
 MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"

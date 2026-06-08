@@ -2,11 +2,6 @@ from http import client
 
 import os
 
-# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-# os.environ["HF_HUB_OFFLINE"] = "1"
-# os.environ["TRANSFORMERS_OFFLINE"] = "1"
-
-
 import string
 import time
 import numpy as np

@@ -12,6 +12,7 @@ from transformers import (
     BitsAndBytesConfig,
     TextIteratorStreamer,
 )
+from wrapt import partial
 import config
 import requests
 import json
@@ -415,6 +416,32 @@ def is_out_of_coverage(query: str) -> bool:
     )
 
 
+def classify_intent(client, query: str) -> dict:
+    """Returns intent classification using a tiny Groq call."""
+    resp = client.chat.completions.create(
+        model=config.GROQ_INTENT_MODEL,  # fastest/cheapest model, not your main one
+        max_tokens=20,
+        temperature=0.0,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Classify the user query into exactly one of these intents:\n"
+                    "- food_search: looking for restaurants, food, or dining recommendations\n"
+                    "- location_only: mentions only a city/location with no food intent\n"
+                    "- greeting: hello, hi, hey, how are you\n"
+                    "- identity: asking who/what the assistant is\n"
+                    "- off_topic: anything else unrelated to food/restaurants\n\n"
+                    "Reply with ONLY the intent label, nothing else."
+                ),
+            },
+            {"role": "user", "content": query},
+        ],
+    )
+    intent = resp.choices[0].message.content.strip().lower()
+    return intent
+
+
 def fetch_context(query: str, top_k: int) -> List[Dict[str, Any]]:
     """
     Calls the separate Retriever Microservice to fetch relevant data.
@@ -496,7 +523,34 @@ async def generate_endpoint(req: GenerateRequest):
         if req.city:
             full_query += f" in {req.city}"
 
-        # ── Skip retrieval for non-food queries ────────────────────────────────────
+        intent = await asyncio.get_event_loop().run_in_executor(
+            None, partial(classify_intent, generator.client, req.query)
+        )
+
+        if intent in config.NON_RETRIEVAL_INTENTS:
+            intent_response = config.INTENT_RESPONSE_MAP.get(intent, {})
+
+            def intent_stream():
+                yield json.dumps(
+                    {
+                        "type": "meta",
+                        "data": {
+                            "retrieval_ms": 0,
+                            "results_count": 0,
+                            "reranked": False,
+                        },
+                    }
+                ) + "\n"
+                yield json.dumps({"type": "sources", "data": []}) + "\n"
+                yield json.dumps({"type": "token", "data": intent_response}) + "\n"
+
+            return StreamingResponse(
+                intent_stream(),
+                media_type="application/x-ndjson",
+                headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+            )
+
+        # Skip retrieval for non-food queries
         if is_non_food_query(req.query):
 
             def greeting_stream():
