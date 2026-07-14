@@ -15,6 +15,87 @@ The system is architected as a set of decoupled, asynchronous microservices to e
 
 To demonstrate a real understanding of everything that happens under the hood of RAG Frameworks. RezRag is built with full control and zero abstractions. No LangChain. No LlamaIndex. No RAG frameworks. There is no managed loader, no pre-built retriever, no abstracted LLM call.
 
+
+## Index
+
+* [Why From Scratch?](#why-from-scratch)
+
+* [Architecture Overview](#architecture-overview)
+
+* [Data Pipeline — From Raw Yelp JSON to Production Grade Vector DB](#data-pipeline--from-raw-yelp-json-to-production-grade-vector-db)
+
+  * [Challenges Solved](#challenges-solved)
+
+* [Under the Hood](#under-the-hood)
+
+  * [Streaming Filter Cascade (`preprocessor.py`)](#streaming-filter-cascade-preprocessorpy)
+
+  * [Composite Restaurant Scoring (`preprocessor.py`)](#composite-restaurant-scoring-preprocessorpy)
+
+  * [Balanced Sentiment Sampling (`pipeline.py`)](#balanced-sentiment-sampling-pipelinepy)
+
+  * [Tiktoken-Bounded Chunking (`chunker.py`)](#tiktoken-bounded-chunking-chunkerpy)
+
+  * [Typed Chunk Structure (`chunker.py`)](#typed-chunk-structure-chunkerpy)
+
+* [Retrieval](#retrieval)
+
+  * [Hybrid Search](#hybrid-search)
+
+  * [Location Extraction](#location-extraction)
+
+* [Query Routing](#query-routing)
+
+  * [Intent Classification](#intent-classification)
+
+  * [Coverage Guard (Two Layers)](#coverage-guard-two-layers)
+
+* [Inference](#inference)
+
+  * [Production - Groq API](#production---groq-api)
+
+  * [Local / Offline - Qwen2.5-3B NF4](#local--offline---qwen25-3b-nf4)
+
+  * [Comparison](#comparison)
+
+* [Retrieval Quality Evaluation](#retrieval-quality-evaluation)
+
+* [Deployment](#deployment)
+
+  * [Serverless Backend (Modal)](#serverless-backend-modal)
+
+  * [Frontend](#frontend)
+
+* [Performance](#performance)
+
+  * [Retrieval (shared across both paths)](#retrieval-shared-across-both-paths)
+
+  * [End-to-End (warm, deployed)](#end-to-end-warm-deployed)
+
+* [Project Structure](#project-structure)
+
+* [Performance Optimizations Implemented](#performance-optimizations-implemented)
+
+* [Setup](#setup)
+
+  * [Requirements](#requirements)
+
+  * [Install](#install)
+
+  * [Configure](#configure)
+
+  * [Run Data Pipeline](#run-data-pipeline)
+
+  * [Run Services](#run-services)
+
+  * [Run Evaluation](#run-evaluation)
+
+* [API](#api)
+
+  * [Generate (user-facing)](#generate-user-facing)
+
+  * [Retrieve (debug)](#retrieve-debug)
+
 ---
 
 
