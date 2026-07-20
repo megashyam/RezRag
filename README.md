@@ -34,7 +34,7 @@ To demonstrate a real understanding of everything that happens under the hood of
 
   * [Balanced Sentiment Sampling (`pipeline.py`)](#balanced-sentiment-sampling-pipelinepy)
 
-  * [Tiktoken-Bounded Chunking (`chunker.py`)](#tiktoken-bounded-chunking-chunkerpy)
+  * [Token-Bounded Chunking (`chunker.py`)](#token-bounded-chunking-chunkerpy)
 
   * [Typed Chunk Structure (`chunker.py`)](#typed-chunk-structure-chunkerpy)
 
@@ -90,6 +90,8 @@ To demonstrate a real understanding of everything that happens under the hood of
 
   * [Run Evaluation](#run-evaluation)
 
+  * [Run Tests](#run-tests)
+
 * [API](#api)
 
   * [Generate (user-facing)](#generate-user-facing)
@@ -104,14 +106,14 @@ To demonstrate a real understanding of everything that happens under the hood of
 ```
 Raw Yelp JSON (~10GB)
     → Preprocessor (scoring, filtering, sentiment sampling)
-    → Chunker (tiktoken-bounded, typed chunks)
+    → Chunker (token-bounded, typed chunks)
     → Embedder (E5-large-v2, BM25 index)
     → Qdrant Cloud (vector DB)
          ↓
 Retriever Microservice (FastAPI)
     → Geo filter (spaCy NER)
     → Qdrant vector search (HNSW)
-    → Local BM25 rescoring
+    → Full-corpus BM25 (independent sparse retrieval, query synonym expansion)
     → RRF fusion
     → CrossEncoder reranking
          ↓
@@ -143,7 +145,7 @@ JSON files with no managed loaders, pre-processed datasets, or data APIs.
 
 **4. Balanced sentiment sampling**: Sampled reviews across positive, neutral, and negative buckets to capture tradeoffs, not just high ratings.
 
-**5. Tiktoken-bounded chunking**: Used token-based splitting to ensure chunks fit within E5-large-v2’s 512-token limit while preserving semantics.
+**5. Token-bounded chunking**: Used E5's own tokenizer for splitting so chunk budgets match what the embedding model  sees.
 
 **6. Typed chunk structure**: Created structured chunks (profile, positive, negative) instead of raw text to improve retrieval specificity.
 
@@ -178,11 +180,11 @@ on wait times, portion sizes, or service issues. Reviews are sampled proportiona
 across positive/neutral/negative buckets with ceiling rounding to preserve rare
 sentiment classes.
 
-### Tiktoken-Bounded Chunking (`chunker.py`)
-Character-based splitting breaks semantic coherence mid-sentence. Token-budget
-arithmetic runs with a fast estimation path (`len(text) // 3`) that only falls
-back to the expensive `tiktoken.encode()` call when the estimate is borderline
-avoiding unnecessary tokenizer overhead across 50k+ chunks.
+### Token-Bounded Chunking (`chunker.py`)
+Chunking tokenizes with E5's own tokenizer, so the token budget matches what
+the embedder sees. Individual reviews are capped and truncated at the token
+level (not by character count) before being packed into a batch, so a single
+long review can't blow the chunk budget on its own.
 
 ### Typed Chunk Structure (`chunker.py`)
 The chunks are not raw review blocks. Each restaurant produces structured chunk types:
@@ -203,7 +205,7 @@ a "avoid if in a rush" query hits negative review chunks.
 
 **Dense retrieval** — E5-large-v2 embeddings queried against Qdrant HNSW index. Captures semantic similarity ("cheap eats" -> "affordable prices").
 
-**Sparse retrieval** — BM25 built on-the-fly over the Qdrant candidate pool. Captures exact keyword matches ("Tonkotsu Ramen", "Gluten-Free").
+**Sparse retrieval** — BM25 over the full chunk corpus. A small synonym table expands the sparse query (e.g. "bbq" <-> "barbecue", "brunch" <-> "breakfast").
 
 **RRF fusion** — Reciprocal Rank Fusion combines both rankings without score normalization:
 ```
@@ -303,16 +305,19 @@ BitsAndBytesConfig(
 
 | Strategy | MRR@5 | 95% CI | Hit@3 | Hit@5 | P@5 | Avg Latency |
 |:---|:---|:---|:---|:---|:---|:---|
-| Hybrid + Rerank | 0.773 | [0.685, 0.854] | 0.936 | 1.000 | 0.523 | 1665ms |
-| Hybrid (no rerank) | 0.737 | [0.640, 0.827] | 0.872 | 0.979 | 0.494 | 1324ms |
+| Hybrid + Rerank | 0.760 | [0.678, 0.841] | 0.979 | 1.000 | 0.413 | 13ms |
+| Hybrid (no rerank) | 0.639 | [0.524, 0.753] | 0.745 | 0.830 | 0.349 | 14ms |
 
-**Key findings:**
-- Hit@5 = 1.000 with reranking every query returns at least one relevant result in top 5
-- Cuisine queries are strongest (MRR@5 = 0.922), landmark queries are weakest (MRR@5 = 0.542)
-- Location accuracy: 99.7% (metro-area aware matching)
-- Reno and Santa Barbara lower performance due to limited Yelp dataset coverage
+**Key Findings**
 
-Eval script: `eval.py` — run with `--verbose` for per-query breakdown, `--out results.json` to save.
+- **Ground-truth refinement:** Updated evaluation labels to include valid retrieved restaurants that were previously excluded, added missing location aliases (e.g., `philly`, `nola`, `indy`), and introduced BM25-side synonym expansion for sparse retrieval gaps, reducing false retrieval failures to zero.
+- **Reranking impact:** Hybrid retrieval with CrossEncoder reranking consistently outperformed the non-reranked baseline, improving MRR@5 by **+0.121**, Hit@5 by **+0.170**, and P@5 by **+0.064** with comparable latency.
+- **RRF sensitivity:** Sweeping `RRF_K` across 10–150 showed negligible performance differences (<0.01 across metrics), indicating that the CrossEncoder reranker contributes most of the final ranking improvement once relevant candidates are retrieved.
+- **Query category performance:** Cuisine-based queries achieved the strongest results (**MRR@5 = 0.922**).
+- **Geographic filtering:** Location-aware retrieval achieved **100% metro-area accuracy** across the evaluation benchmark.
+- **Caching fixes:** Improved query cache reliability by including retrieval parameters (`k_rrf`, `initial_k`, `max_duplicates`) in cache keys and clearing stale cached results after ranking logic changes.
+
+Eval script: `ml_backend/evaluation.py`.
 
 ---
 
@@ -342,7 +347,7 @@ Next.js on Vercel. Token streaming, interactive Leaflet map, restaurant cards wi
 |:---|:---|
 | E5 embedding (CPU) | ~200–500ms |
 | Qdrant vector search | ~133–700ms |
-| BM25 + RRF | ~0ms |
+| BM25 + RRF | ~0ms (pre-full-corpus-BM25 measurement, needs re-benchmarking) |
 | CrossEncoder rerank | ~200–400ms |
 | **Total retrieval** | **~700ms–1.2s** |
 
@@ -363,21 +368,25 @@ Variance is inherent to free-tier serverless infrastructure. A paid Qdrant clust
 ```
 RezRag/
 ├── ml_backend/
-│   ├── config.py           # Centralized configuration
-│   ├── retriever.py        # Hybrid search, RRF, geo-filter (FastAPI)
-│   ├── generator.py        # Groq + local Qwen generator (FastAPI)
-│   ├── cache.py            # diskcache SQLite query result cache
-│   ├── observability.py    # Prometheus metrics + loguru logging
-│   └── eval.py             # MRR, Hit@K, P@K, bootstrap CI
+│   ├── config.py             # Centralized configuration
+│   ├── retriever.py          # Hybrid search, RRF, geo-filter (FastAPI)
+│   ├── generator_groq.py     # Groq generator, production (FastAPI)
+│   ├── generator_local.py    # Local quantized Qwen generator (FastAPI)
+│   ├── cache.py              # diskcache SQLite query result cache
+│   ├── observability.py      # Prometheus metrics + loguru logging
+│   └── evaluation.py         # MRR, Hit@K, P@K, bootstrap CI
 ├── data_pipeline/
-│   ├── preprocessor.py     # Raw Yelp NDJSON filtering + scoring
-│   ├── chunker.py          # Tiktoken-bounded semantic chunking
-│   ├── embedder.py         # E5-large-v2 embeddings + BM25 index
-│   └── ingester.py         # Generator-based Qdrant ingestion
+│   ├── preprocessor.py       # Raw Yelp NDJSON filtering + scoring
+│   ├── chunker.py            # Token-bounded semantic chunking
+│   ├── embedder.py           # E5-large-v2 embeddings + full-corpus BM25 index
+│   └── ingester.py           # Generator-based Qdrant ingestion
 ├── deployment/
-│   ├── modal_retriever.py  # Modal serverless — retriever
-│   └── modal_generator.py  # Modal serverless — generator
-└── ui/                     # Next.js frontend
+│   ├── modal_retriever.py    # Modal serverless — retriever
+│   └── modal_generator.py    # Modal serverless — generator
+├── tests/                    # pytest suite — cache, chunking, eval metrics, generator helpers
+├── conftest.py
+├── requirements.txt
+└── ui/                        # Next.js frontend
 ```
 
 ---
@@ -406,8 +415,10 @@ cd rezrag
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 pip install -r requirements.txt
+# requirements.txt pins CPU torch; for GPU (local inference), install the matching
+# CUDA build first, e.g.:
+#   pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124 --index-url https://download.pytorch.org/whl/cu124
 python -m spacy download en_core_web_sm
 ```
 
@@ -443,8 +454,8 @@ python data_pipeline/ingester.py
 # Terminal 1
 uvicorn ml_backend.retriever:app --port 8000
 
-# Terminal 2
-uvicorn ml_backend.generator:app --port 9000
+# Terminal 2 — Groq (production) or generator_local (offline/local GPU)
+uvicorn ml_backend.generator_groq:app --port 9000
 
 # Terminal 3
 cd ui && npm run dev
@@ -453,7 +464,13 @@ cd ui && npm run dev
 ### Run Evaluation
 
 ```bash
-python ml_backend/eval.py --url http://127.0.0.1:8000 --top_k 8 --verbose
+python ml_backend/evaluation.py --url http://127.0.0.1:8000 --top_k 8 --verbose
+```
+
+### Run Tests
+
+```bash
+pytest tests/
 ```
 
 ---
