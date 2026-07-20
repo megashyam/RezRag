@@ -2,6 +2,7 @@ from http import client
 
 import os
 
+import pickle
 import string
 import time
 import numpy as np
@@ -11,7 +12,7 @@ import torch
 from typing import Optional, List
 from contextlib import asynccontextmanager
 import logging
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from sentence_transformers import CrossEncoder, SentenceTransformer
@@ -41,7 +42,7 @@ load_dotenv()
 class HybridRetriever:
     """
     Service class handling the hybrid retrieval pipeline, including vector search,
-    BM25 rescoring, Reciprocal Rank Fusion (RRF), and Cross-Encoder reranking.
+    full-corpus BM25, Reciprocal Rank Fusion (RRF), and Cross-Encoder reranking.
     """
 
     def __init__(self):
@@ -49,8 +50,15 @@ class HybridRetriever:
         self.reranker: Optional[CrossEncoder] = None
         self.nlp = None
         self.city_list = set()
-        self.embedding_model = "intfloat/e5-large-v2"
+        self.embedding_model = config.EMBEDDING_MODEL_NAME
         self.embedder = None
+        # Full-corpus sparse index — real hybrid retrieval, scored against the
+        # whole corpus rather than just whatever dense search happened to return.
+        self.bm25_full = None
+        self.corpus_df: Optional[pd.DataFrame] = None
+        self.corpus_city: Optional[pd.Series] = None
+        self.corpus_state: Optional[pd.Series] = None
+        self.ready = False
 
     def initialize(self):
         """
@@ -69,7 +77,7 @@ class HybridRetriever:
             )
             self.qdrant.get_collections()  # Health check
             logger.info("Connected to Qdrant.")
-            for field in ["city", "state", "restaurant", "doc_id"]:
+            for field in ["city", "state", "restaurant", "doc_id", "chunk_id"]:
                 self.qdrant.create_payload_index(
                     collection_name=config.COLLECTION_NAME,
                     field_name=field,
@@ -87,9 +95,11 @@ class HybridRetriever:
         )
 
         # Embedder
-        logger.info("Loading E5 embedder ...")
-        self.embedder = SentenceTransformer("intfloat/e5-large-v2", device="cpu")
-        logger.info(" E5 embedder ready.")
+        logger.info(f"Loading E5 embedder on {config.DEVICE}...")
+        self.embedder = SentenceTransformer(
+            config.EMBEDDING_MODEL_NAME, device=config.DEVICE
+        )
+        logger.info("E5 embedder ready.")
 
         # 3. Spacy
         try:
@@ -110,6 +120,33 @@ class HybridRetriever:
         except Exception as e:
             logger.warning(f"Could not load city list: {e}")
 
+        # 5. Full-corpus sparse index. Both files come from the same embedder.py
+        # run and share row order via the `chunk_id` column, so they can be
+        # joined on it.
+        try:
+            if config.BM25_PATH.exists() and config.METADATA_PATH.exists():
+                with open(config.BM25_PATH, "rb") as f:
+                    self.bm25_full = pickle.load(f)
+                self.corpus_df = pd.read_parquet(
+                    config.METADATA_PATH,
+                    columns=["chunk_id", "chunk", "business_id", "restaurant", "city",
+                             "state", "address", "latitude", "longitude"],
+                )
+                self.corpus_city = self.corpus_df["city"].fillna("").str.lower()
+                self.corpus_state = self.corpus_df["state"].fillna("")
+                logger.info(
+                    f"Loaded full-corpus BM25 index ({len(self.corpus_df)} chunks)."
+                )
+            else:
+                logger.warning(
+                    "Full-corpus BM25 index or metadata not found — falling back "
+                    "to rescoring just the dense shortlist."
+                )
+        except Exception as e:
+            logger.warning(f"Could not load full-corpus BM25 index: {e}")
+
+        self.ready = True
+
     def _get_embedding(self, text: str) -> List[float]:
         """
         Generates a dense embedding for the given text using the E5 model.
@@ -120,9 +157,6 @@ class HybridRetriever:
         Returns:
             List[float]: A list of floats representing the embedding vector.
         """
-
-        import json as _json
-
         with Timer("retriever", "embedding"):
             vec = self.embedder.encode(
                 f"query: {text}",
@@ -176,7 +210,7 @@ class HybridRetriever:
         """
         Executes the Hybrid Search Pipeline:
         1. Vector Search (Qdrant)
-        2. Local BM25 (on retrieved chunks)
+        2. Full-corpus BM25
         3. RRF Fusion
         4. Cross-Encoder Reranking
 
@@ -210,7 +244,7 @@ class HybridRetriever:
             )
 
         q_filter = models.Filter(must=conditions) if conditions else None
-        print(f"Qdrant Filter: {q_filter}")
+        logger.debug(f"Qdrant Filter: {q_filter}")
 
         # B. Get Embeddings & Query Qdrant
         with Timer("retriever", "embedding"):
@@ -226,46 +260,97 @@ class HybridRetriever:
                     limit=initial_k,
                     with_payload=True,
                 ).points
-                t2 = time.perf_counter()
             except Exception as e:
                 logger.error(f"Qdrant Query Failed: {e}")
+                return [], float((time.perf_counter() - t0) * 1000)
+            t2 = time.perf_counter()
 
         logger.info(f"Qdrant returned {len(points)} points.")
 
-        # C. Prepare Data for Fusion
-        chunks = [
-            {
+        # C. Prepare dense candidates, keyed by the stable chunk_id assigned at
+        # ingestion time so they can be merged with sparse candidates below.
+        dense_by_id: Dict[str, Dict[str, Any]] = {}
+        for p in points:
+            cid = p.payload.get("chunk_id") or p.id
+            dense_by_id[cid] = {
                 "text": p.payload.get("text_content", ""),
                 "meta": p.payload,
                 "vec_score": p.score,
             }
-            for p in points
-        ]
-        corpus_texts = [c["text"] for c in chunks]
 
-        # D. Local BM25 Rescoring (Ranking the retrieved candidates by keyword overlap)
+        # D. Sparse retrieval — BM25 over the full corpus when the full-corpus
+        # index is loaded, falling back to rescoring just the dense shortlist.
         with Timer("retriever", "bm25"):
             translator = str.maketrans("", "", string.punctuation)
             clean_query = query.lower().translate(translator).split()
+            expansions = {
+                syn
+                for tok in clean_query
+                for syn in config.QUERY_SYNONYMS.get(tok, [])
+            }
+            clean_query = clean_query + [t for t in expansions if t not in clean_query]
 
-            tokenized_corpus = [
-                doc.lower().translate(translator).split() for doc in corpus_texts
-            ]
-
-            if tokenized_corpus:
-                bm25 = BM25Okapi(tokenized_corpus)
-                bm25_scores = np.array(bm25.get_scores(clean_query))
-                t3 = time.perf_counter()
+            sparse_by_id: Dict[str, Dict[str, Any]] = {}
+            if self.bm25_full is not None and self.corpus_df is not None:
+                scores = self.bm25_full.get_scores(clean_query)
+                mask = np.ones(len(scores), dtype=bool)
+                if city:
+                    mask &= (self.corpus_city == city.lower()).to_numpy()
+                if state and not city:
+                    mask &= (self.corpus_state == state).to_numpy()
+                scores = np.where(mask, scores, -np.inf)
+                top_sparse_idx = np.argsort(-scores)[:initial_k]
+                for pos in top_sparse_idx:
+                    if not np.isfinite(scores[pos]):
+                        continue
+                    row = self.corpus_df.iloc[pos]
+                    cid = row["chunk_id"]
+                    sparse_by_id[cid] = {
+                        "text": row["chunk"],
+                        "meta": row.to_dict(),
+                        "bm25_score": float(scores[pos]),
+                    }
             else:
-                bm25_scores = np.zeros(len(chunks))
+                corpus_texts = [c["text"] for c in dense_by_id.values()]
+                tokenized_corpus = [
+                    doc.lower().translate(translator).split() for doc in corpus_texts
+                ]
+                if tokenized_corpus:
+                    local_bm25 = BM25Okapi(tokenized_corpus)
+                    local_scores = local_bm25.get_scores(clean_query)
+                    for cid, sc in zip(dense_by_id.keys(), local_scores):
+                        sparse_by_id[cid] = {**dense_by_id[cid], "bm25_score": float(sc)}
+            t3 = time.perf_counter()
 
-            vector_scores = np.array([c["vec_score"] for c in chunks])
+        # E. Union of dense + sparse candidates, then Reciprocal Rank Fusion.
+        all_ids = list(dict.fromkeys(list(dense_by_id.keys()) + list(sparse_by_id.keys())))
+        chunks = []
+        for cid in all_ids:
+            base = dense_by_id.get(cid) or sparse_by_id.get(cid)
+            chunks.append({"id": cid, "text": base["text"], "meta": base["meta"]})
+        corpus_texts = [c["text"] for c in chunks]
 
-        # E. Reciprocal Rank Fusion (RRF)
-        vec_rank = np.argsort(np.argsort(-vector_scores))
-        bm25_rank = np.argsort(np.argsort(-bm25_scores))
+        vector_scores = np.array(
+            [dense_by_id[c["id"]]["vec_score"] if c["id"] in dense_by_id else -np.inf for c in chunks]
+        )
+        bm25_scores = np.array(
+            [sparse_by_id[c["id"]]["bm25_score"] if c["id"] in sparse_by_id else -np.inf for c in chunks]
+        )
 
-        rrf_scores = (1 / (k_rrf + vec_rank)) + (1 / (k_rrf + bm25_rank))
+        def _ranks(scores: np.ndarray) -> np.ndarray:
+            # Rank only among finite (actually-present) scores; absent candidates
+            # get no RRF term at all.
+            present = np.isfinite(scores)
+            ranks = np.full(len(scores), len(scores), dtype=float)
+            ranks[present] = np.argsort(np.argsort(-scores[present]))
+            return ranks
+
+        vec_rank = _ranks(vector_scores)
+        bm25_rank = _ranks(bm25_scores)
+
+        rrf_scores = np.where(np.isfinite(vector_scores), 1 / (k_rrf + vec_rank), 0.0) + np.where(
+            np.isfinite(bm25_scores), 1 / (k_rrf + bm25_rank), 0.0
+        )
 
         # Sort by RRF score descending
         candidate_indices = np.argsort(-rrf_scores)
@@ -278,22 +363,20 @@ class HybridRetriever:
         t5 = t4
 
         if do_rerank and self.reranker:
-            # Only rerank the sorted candidates
-            top_candidates_idx = candidate_indices  # Rerank all retrieved candidates
+            top_candidates_idx = candidate_indices
             with Timer("retriever", "rerank"):
-                pairs = [[query, corpus_texts[i][:400]] for i in top_candidates_idx]
+                # No manual char truncation — the CrossEncoder was constructed
+                # with max_length=512 and truncates on its own tokenizer.
+                pairs = [[query, corpus_texts[i]] for i in top_candidates_idx]
 
                 if pairs:
                     rerank_scores = self.reranker.predict(pairs)
                     t5 = time.perf_counter()
-                    # Sort based on reranker output
                     sorted_rerank_idx = np.argsort(-rerank_scores)
 
-                    # Map back to original indices
                     final_indices = [top_candidates_idx[i] for i in sorted_rerank_idx]
                     final_scores = [rerank_scores[i] for i in sorted_rerank_idx]
 
-                    # Track when reranker changes top result
                     if (
                         len(final_indices) > 0
                         and final_indices[0] != candidate_indices[0]
@@ -315,7 +398,7 @@ class HybridRetriever:
                         "restaurant": c["meta"].get("restaurant", "Unknown"),
                         "text": c["text"],
                         "city": c["meta"].get("city"),
-                        "state": c["meta"].get("state_abbr"),
+                        "state": c["meta"].get("state"),
                         "address": c["meta"].get("address"),
                         "latitude": c["meta"].get("latitude"),
                         "longitude": c["meta"].get("longitude"),
@@ -325,7 +408,7 @@ class HybridRetriever:
 
             if len(results) >= top_k:
                 break
-        logger.info(len(results))
+        logger.info(f"Search returning {len(results)} deduplicated results.")
         t_end = time.perf_counter()
         retrieval_ms = float((t_end - t0) * 1000)
 
@@ -338,7 +421,7 @@ class HybridRetriever:
                 f"rerank={int((t5-t4)*1000)}ms | "
                 f"total={int((t5-t0)*1000)}ms"
             )
-        except:
+        except Exception:
             pass
         return results, retrieval_ms
 
@@ -394,13 +477,16 @@ class RetrieveResponse(BaseModel):
 
 # --- Endpoints ---
 @app.get("/health")
-def health_check():
+def health_check(response: Response):
     """
     Health check endpoint to verify service availability.
 
     Returns:
-        Dict: A standard ok status dictionary.
+        Dict: A status dictionary reflecting whether the retriever finished initializing.
     """
+    if not retriever.ready or retriever.qdrant is None:
+        response.status_code = 503
+        return {"status": "not_ready"}
     return {"status": "ok"}
 
 
@@ -419,11 +505,13 @@ def retrieve_endpoint(req: RetrieveRequest):
     Raises:
         HTTPException: If the retriever is not initialized or an internal error occurs.
     """
-    if not retriever.qdrant:
-        raise HTTPException(status_code=500, detail="Retriever not initialized")
+    if not retriever.ready or not retriever.qdrant:
+        raise HTTPException(status_code=503, detail="Retriever not initialized")
 
     # Cache check
-    cached = get_cached(req.query, req.top_k, req.do_rerank)
+    cached = get_cached(
+        req.query, req.top_k, req.do_rerank, req.k_rrf, req.initial_k, req.max_duplicates
+    )
     if cached is not None:
         CACHE_COUNTER.labels("hit").inc()
         QUERY_COUNTER.labels("retriever", "cache_hit").inc()
@@ -456,7 +544,10 @@ def retrieve_endpoint(req: RetrieveRequest):
     QUERY_COUNTER.labels("retriever", "success").inc()
 
     if results:
-        set_cached(req.query, req.top_k, req.do_rerank, results)
+        set_cached(
+            req.query, req.top_k, req.do_rerank, results,
+            req.k_rrf, req.initial_k, req.max_duplicates,
+        )
 
     logger.info(f"Retrieved {(len(results))} for query: '{req.query}'")
 

@@ -397,23 +397,35 @@ class GenerateRequest(BaseModel):
 # --- Helper Functions ---
 
 
+def _safe_excerpt(text: Optional[str], max_len: int = 400) -> str:
+    if not text:
+        return ""
+    parts = text.split("--")
+    return (parts[1] if len(parts) > 1 else parts[0]).strip()[:max_len]
+
+
 def is_non_food_query(query: str) -> bool:
     """Determines if a query is likely non-food related based on regex patterns."""
     q = query.strip().lower()
     return any(re.search(p, q) for p in config.NON_FOOD_PATTERNS)
 
 
+def _area_mentioned(area: str, query: str, query_lower: str) -> bool:
+    # 2-letter entries (state codes like "in" for Indiana) match case-sensitively
+    # against the original query — lowercased, "in" matches the preposition "in"
+    # present in almost every query.
+    if len(area) == 2:
+        return re.search(r"\b" + re.escape(area.upper()) + r"\b", query) is not None
+    return re.search(r"\b" + re.escape(area) + r"\b", query_lower) is not None
+
+
 def is_out_of_coverage(query: str) -> bool:
     """checks if the query mentions any covered areas first, then checks for out of coverage cities."""
     q = query.lower()
-    if any(
-        re.search(r"\b" + re.escape(area) + r"\b", q) for area in config.COVERED_AREAS
-    ):
+    if any(_area_mentioned(area, query, q) for area in config.COVERED_AREAS):
         return False
 
-    return any(
-        re.search(r"\b" + re.escape(city) + r"\b", q) for city in config.OUT_OF_COVERAGE
-    )
+    return any(_area_mentioned(city, query, q) for city in config.OUT_OF_COVERAGE)
 
 
 def classify_intent(client, query: str) -> dict:
@@ -513,147 +525,126 @@ async def generate_endpoint(req: GenerateRequest):
     Raises:
         HTTPException: If the generator model is not loaded in state.
     """
-    async with _gen_lock:
-        generator: RAGGenerator = gen_state.get("generator")
-        if not generator:
-            raise HTTPException(status_code=500, detail="Model not loaded")
+    generator: RAGGenerator = gen_state.get("generator")
+    if not generator:
+        raise HTTPException(status_code=500, detail="Model not loaded")
 
-        # 1. Refine Query
-        full_query = req.query
-        if req.city:
-            full_query += f" in {req.city}"
+    # 1. Refine Query
+    full_query = req.query
+    if req.city:
+        full_query += f" in {req.city}"
 
-        intent = await asyncio.get_event_loop().run_in_executor(
-            None, partial(classify_intent, generator.client, req.query)
+    intent = await asyncio.get_event_loop().run_in_executor(
+        None, partial(classify_intent, generator.client, req.query)
+    )
+
+    if intent in config.NON_RETRIEVAL_INTENTS:
+        intent_response = config.INTENT_RESPONSE_MAP.get(intent, {})
+
+        def intent_stream():
+            yield json.dumps(
+                {
+                    "type": "meta",
+                    "data": {
+                        "retrieval_ms": 0,
+                        "results_count": 0,
+                        "reranked": False,
+                    },
+                }
+            ) + "\n"
+            yield json.dumps({"type": "sources", "data": []}) + "\n"
+            yield json.dumps({"type": "token", "data": intent_response}) + "\n"
+
+        return StreamingResponse(
+            intent_stream(),
+            media_type="application/x-ndjson",
+            headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
         )
 
-        if intent in config.NON_RETRIEVAL_INTENTS:
-            intent_response = config.INTENT_RESPONSE_MAP.get(intent, {})
+    # Skip retrieval for non-food queries
+    if is_non_food_query(req.query):
 
-            def intent_stream():
-                yield json.dumps(
-                    {
-                        "type": "meta",
-                        "data": {
-                            "retrieval_ms": 0,
-                            "results_count": 0,
-                            "reranked": False,
-                        },
-                    }
-                ) + "\n"
-                yield json.dumps({"type": "sources", "data": []}) + "\n"
-                yield json.dumps({"type": "token", "data": intent_response}) + "\n"
+        def greeting_stream():
+            yield json.dumps(
+                {
+                    "type": "meta",
+                    "data": {
+                        "retrieval_ms": 0,
+                        "results_count": 0,
+                        "reranked": False,
+                    },
+                }
+            ) + "\n"
+            yield json.dumps({"type": "sources", "data": []}) + "\n"
+            yield json.dumps(
+                {
+                    "type": "token",
+                    "data": (
+                        "Hi! I'm RezRag, a restaurant recommendation assistant powered by real Yelp reviews 🍽️\n\n"
+                        "Try asking:\n"
+                        "- *Best tacos in Philadelphia*\n"
+                        "- *Romantic Italian dinner in Nashville*\n"
+                        "- *Late night ramen in Tampa*\n"
+                        "- *Casual Indian restaurant in Pennsylvania*\n\n"
+                        "I cover cities across: \n"
+                        "📍 **Pennsylvania** — Philadelphia, King of Prussia, Norristown, Doylestown (PA)\n"
+                        "📍 **California** — Santa Barbara, Goleta, Montecito, Carpinteria (CA)\n"
+                        "📍 **New Jersey** — Cherry Hill, Camden, Voorhees, Haddonfield (NJ)\n"
+                        "📍 **Florida** — Tampa, Clearwater, St. Petersburg, Brandon (FL)\n"
+                        "📍 **Tennessee** — Nashville, Brentwood, Franklin, Hendersonville (TN)\n"
+                        "📍 **Louisiana** — New Orleans, Metairie, Kenner, Chalmette (LA)\n"
+                        "📍 **Indiana** — Indianapolis, Carmel, Fishers, Noblesville (IN)\n"
+                        "📍 **Arizona** — Tucson, Oro Valley, Marana, Sahuarita (AZ)\n"
+                        "📍 **Nevada** — Reno (NV)\n"
+                        "📍 **Idaho** — Boise, Meridian, Eagle (ID)\n"
+                        "📍 **Illinois** — Belleville, Collinsville, Mascoutah, Caseyville (IL)\n"
+                        "📍 **Missouri** — Saint Louis, Chesterfield, Ballwin, Creve Coeur (MO)\n"
+                        "📍 **Delaware** — Wilmington, Claymont, Christiana (DE)\n"
+                        "📍 **Alberta** — Edmonton (AB)\n"
+                    ),
+                }
+            ) + "\n" + "\n"
 
-            return StreamingResponse(
-                intent_stream(),
-                media_type="application/x-ndjson",
-                headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
-            )
+        return StreamingResponse(
+            greeting_stream(),
+            media_type="application/x-ndjson",
+            headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+        )
 
-        # Skip retrieval for non-food queries
-        if is_non_food_query(req.query):
+    if is_out_of_coverage(req.query):
 
-            def greeting_stream():
-                yield json.dumps(
-                    {
-                        "type": "meta",
-                        "data": {
-                            "retrieval_ms": 0,
-                            "results_count": 0,
-                            "reranked": False,
-                        },
-                    }
-                ) + "\n"
-                yield json.dumps({"type": "sources", "data": []}) + "\n"
-                yield json.dumps(
-                    {
-                        "type": "token",
-                        "data": (
-                            "Hi! I'm RezRag, a restaurant recommendation assistant powered by real Yelp reviews 🍽️\n\n"
-                            "Try asking:\n"
-                            "- *Best tacos in Philadelphia*\n"
-                            "- *Romantic Italian dinner in Nashville*\n"
-                            "- *Late night ramen in Tampa*\n"
-                            "- *Casual Indian restaurant in Pennsylvania*\n\n"
-                            "I cover cities across: \n"
-                            "📍 **Pennsylvania** — Philadelphia, King of Prussia, Norristown, Doylestown (PA)\n"
-                            "📍 **California** — Santa Barbara, Goleta, Montecito, Carpinteria (CA)\n"
-                            "📍 **New Jersey** — Cherry Hill, Camden, Voorhees, Haddonfield (NJ)\n"
-                            "📍 **Florida** — Tampa, Clearwater, St. Petersburg, Brandon (FL)\n"
-                            "📍 **Tennessee** — Nashville, Brentwood, Franklin, Hendersonville (TN)\n"
-                            "📍 **Louisiana** — New Orleans, Metairie, Kenner, Chalmette (LA)\n"
-                            "📍 **Indiana** — Indianapolis, Carmel, Fishers, Noblesville (IN)\n"
-                            "📍 **Arizona** — Tucson, Oro Valley, Marana, Sahuarita (AZ)\n"
-                            "📍 **Nevada** — Reno (NV)\n"
-                            "📍 **Idaho** — Boise, Meridian, Eagle (ID)\n"
-                            "📍 **Illinois** — Belleville, Collinsville, Mascoutah, Caseyville (IL)\n"
-                            "📍 **Missouri** — Saint Louis, Chesterfield, Ballwin, Creve Coeur (MO)\n"
-                            "📍 **Delaware** — Wilmington, Claymont, Christiana (DE)\n"
-                            "📍 **Alberta** — Edmonton (AB)\n"
-                        ),
-                    }
-                ) + "\n" + "\n"
+        def coverage_stream():
+            yield json.dumps(
+                {
+                    "type": "meta",
+                    "data": {
+                        "retrieval_ms": 0,
+                        "results_count": 0,
+                        "reranked": False,
+                    },
+                }
+            ) + "\n"
+            yield json.dumps({"type": "sources", "data": []}) + "\n"
+            yield json.dumps(
+                {"type": "token", "data": config.COVERAGE_MESSAGE}
+            ) + "\n"
 
-            return StreamingResponse(
-                greeting_stream(),
-                media_type="application/x-ndjson",
-                headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
-            )
+        return StreamingResponse(
+            coverage_stream(),
+            media_type="application/x-ndjson",
+            headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+        )
 
-        if is_out_of_coverage(req.query):
+    # 2. Retrieve Context
+    with Timer("generator", "context_fetch"):
+        context_results, retrieval_ms = fetch_context(full_query, req.top_k)
 
-            def coverage_stream():
-                yield json.dumps(
-                    {
-                        "type": "meta",
-                        "data": {
-                            "retrieval_ms": 0,
-                            "results_count": 0,
-                            "reranked": False,
-                        },
-                    }
-                ) + "\n"
-                yield json.dumps({"type": "sources", "data": []}) + "\n"
-                yield json.dumps(
-                    {
-                        "type": "token",
-                        "data": (
-                            "     'That location isn't covered in the Yelp dataset. I currently cover cities from:\n\n"
-                            "📍 **Pennsylvania** — Philadelphia, King of Prussia, Norristown, Doylestown (PA)\n"
-                            "📍 **California** — Santa Barbara, Goleta, Montecito, Carpinteria (CA)\n"
-                            "📍 **New Jersey** — Cherry Hill, Camden, Voorhees, Haddonfield (NJ)\n"
-                            "📍 **Florida** — Tampa, Clearwater, St. Petersburg, Brandon (FL)\n"
-                            "📍 **Tennessee** — Nashville, Brentwood, Franklin, Hendersonville (TN)\n"
-                            "📍 **Louisiana** — New Orleans, Metairie, Kenner, Chalmette (LA)\n"
-                            "📍 **Indiana** — Indianapolis, Carmel, Fishers, Noblesville (IN)\n"
-                            "📍 **Arizona** — Tucson, Oro Valley, Marana, Sahuarita (AZ)\n"
-                            "📍 **Nevada** — Reno (NV)\n"
-                            "📍 **Idaho** — Boise, Meridian, Eagle (ID)\n"
-                            "📍 **Illinois** — Belleville, Collinsville, Mascoutah, Caseyville (IL)\n"
-                            "📍 **Missouri** — Saint Louis, Chesterfield, Ballwin, Creve Coeur (MO)\n"
-                            "📍 **Delaware** — Wilmington, Claymont, Christiana (DE)\n"
-                            "📍 **Alberta** — Edmonton (AB)\n"
-                            "Try: *best tacos in Philadelphia* or *late night food in Nashville* 🍜"
-                        ),
-                    }
-                ) + "\n"
+    logger.info(f"[API] Retrieved {len(context_results)} snippets.")
+    QUERY_COUNTER.labels("generator", "started").inc()
 
-            return StreamingResponse(
-                coverage_stream(),
-                media_type="application/x-ndjson",
-                headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
-            )
+    # 3. Stream Response
 
-        # 2. Retrieve Context
-        with Timer("generator", "context_fetch"):
-            context_results, retrieval_ms = fetch_context(full_query, req.top_k)
-
-        logger.info(f"[API] Retrieved {len(context_results)} snippets.")
-        QUERY_COUNTER.labels("generator", "started").inc()
-
-        # 3. Stream Response
-
-    def response_stream():
+    async def response_stream():
         """
         Internal generator to yield Server-Sent Events (SSE) or NDJSON chunks
         for metadata, sources, generating tokens, and eventual exceptions.
@@ -684,7 +675,7 @@ async def generate_endpoint(req: GenerateRequest):
                 "lon": r.get("longitude"),
                 "city": r.get("city"),
                 "state": r.get("state"),
-                "excerpt": (r.get("text").split("--")[1] or "")[:400],
+                "excerpt": _safe_excerpt(r.get("text")),
             }
             for r in context_results
         ]
@@ -704,9 +695,9 @@ async def generate_endpoint(req: GenerateRequest):
             return
 
         try:
-            for token in generator.generate_stream_groq(req.query, context_results):
-                # print(f"YIELD: {repr(token)}", flush=True)
-                yield json.dumps({"type": "token", "data": token}) + "\n"
+            async with _gen_lock:
+                for token in generator.generate_stream_groq(req.query, context_results):
+                    yield json.dumps({"type": "token", "data": token}) + "\n"
             QUERY_COUNTER.labels("generator", "remove success").inc()
         except RateLimitError:
             yield json.dumps(

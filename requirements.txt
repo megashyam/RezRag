@@ -1,0 +1,51 @@
+# Pinned to the versions this project is developed and evaluated against.
+#
+# Torch ships with CUDA 12.4 wheels — install from the PyTorch index if pip's
+# default index doesn't resolve the +cu124 build for your platform:
+#   pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124 --index-url https://download.pytorch.org/whl/cu124
+# CPU-only machines can instead use plain `torch==2.6.0` from PyPI.
+
+torch==2.6.0
+torchvision==0.21.0
+torchaudio==2.6.0
+
+# ML / retrieval
+transformers==4.57.1
+sentence-transformers==5.5.0
+rank-bm25==0.2.2
+spacy==3.8.14
+scikit-learn==1.8.0
+bitsandbytes==0.49.2
+
+# Data pipeline
+pandas==2.3.3
+numpy==2.3.1
+pyarrow==23.0.1
+orjson==3.11.7
+tqdm==4.67.1
+
+# Services
+fastapi==0.136.0
+uvicorn[standard]==0.46.0
+pydantic==2.12.5
+httpx==0.28.1
+requests==2.34.2
+qdrant-client==1.18.0
+groq==1.2.0
+diskcache==5.6.3
+wrapt==2.1.2
+
+# Observability
+loguru==0.7.3
+prometheus-client
+prometheus-fastapi-instrumentator==7.1.0
+
+# Config / misc
+python-dotenv==1.2.2
+tabulate==0.10.0
+
+# Testing (dev)
+pytest==8.3.4
+
+# spaCy's English pipeline is not a normal PyPI package — install separately:
+#   python -m spacy download en_core_web_sm

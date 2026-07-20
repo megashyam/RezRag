@@ -43,7 +43,9 @@ class YelpEmbedder:
         df = pd.read_pickle(config.CHUNKED_DATA_PATH)
 
         chunk_cols = [
-            c for c in ["chunked_pos", "chunked_neu", "chunked_neg"] if c in df.columns
+            c
+            for c in ["chunked_profile", "chunked_pos", "chunked_neu", "chunked_neg"]
+            if c in df.columns
         ]
         meta_cols = [
             "business_id",
@@ -67,6 +69,7 @@ class YelpEmbedder:
         self.df_chunks = df_exploded.rename(
             columns={"chunk_list": "chunk", "name": "restaurant"}
         ).reset_index(drop=True)
+        self.df_chunks["chunk_id"] = self.df_chunks.index.astype(str)
         self.all_text_chunks = self.df_chunks["chunk"].tolist()
 
         logger.info(
@@ -91,7 +94,7 @@ class YelpEmbedder:
         )
 
         if load_precomputed and os.path.exists(config.PRECOMPUTED_PATH):
-            print(f"Loading embeddings from {config.PRECOMPUTED_PATH}...")
+            logger.info(f"Loading embeddings from {config.PRECOMPUTED_PATH}...")
             self.vectors = torch.load(config.PRECOMPUTED_PATH, map_location=self.device)
             logger.info(f"Loaded embeddings from {config.PRECOMPUTED_PATH}")
 
@@ -120,7 +123,7 @@ class YelpEmbedder:
             self.load_and_flatten_data()
 
         if load_precomputed and os.path.exists(config.BM25_PATH):
-            print(f"Loading BM25 from {config.BM25_PATH}...")
+            logger.info(f"Loading BM25 from {config.BM25_PATH}...")
             with open(config.BM25_PATH, "rb") as f:
                 self.bm25 = pickle.load(f)
             logger.info(f"Loaded BM25 index from {config.BM25_PATH}")
@@ -144,8 +147,8 @@ class YelpEmbedder:
         Executes the embedding and indexing pipeline in order.
         """
         self.load_and_flatten_data()
-        self.generate_vectors()
-        self.build_bm25()
+        self.generate_vectors(load_precomputed=False)
+        self.build_bm25(load_precomputed=False)
 
 
 if __name__ == "__main__":

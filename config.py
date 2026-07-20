@@ -8,6 +8,7 @@ from pathlib import Path
 import torch
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+GEN_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Paths
 DATA_DIR = Path("data")
@@ -31,6 +32,7 @@ REVIEWS_COEFF = 0.7
 MAX_REVIEWS_PER_RESTAURANT = 40
 REVIEW_COUNTS_PER_RESTAURANT = 50
 MIN_DYNAMIC_LIMIT = 10
+MIN_FILTERED_REVIEWS = 5
 TOP_RESTAURANTS_PER_CITY = 200
 MIN_REVIEW_WORDS = 30
 FILTER_YEAR = 2018
@@ -44,6 +46,23 @@ RRF_K = 60
 MAX_DUPLICATES = 1
 DO_RERANK = True
 
+QUERY_SYNONYMS: dict[str, list[str]] = {
+    "bbq": ["barbecue", "barbeque"],
+    "barbecue": ["bbq"],
+    "barbeque": ["bbq"],
+    "brunch": ["breakfast"],
+    "breakfast": ["brunch"],
+    "rooftop": ["terrace", "patio"],
+    "romantic": ["date", "intimate"],
+    "upscale": ["fancy", "highend"],
+    "cozy": ["quiet", "comfortable"],
+    "craft": ["brewery", "microbrewery"],
+    "vegan": ["plantbased"],
+    "vegetarian": ["meatless"],
+    "kid": ["family", "children"],
+    "family": ["kid", "children"],
+}
+
 # Qdrant Configuration
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
@@ -54,14 +73,13 @@ INGEST_BATCH_SIZE = 256
 MAX_WORKERS = 4
 
 # Text Chunking Settings
-CHUNK_MAX_TOKENS = 1024
+EMBED_MAX_SEQ_LENGTH = 512
+CHUNK_MAX_TOKENS = 480
 CHUNK_MIN_TOKENS = 50
-TOKEN_ENCODING = "cl100k_base"
 OVERHEAD_TOKENS = 4
 
 # External Services
 RETRIEVER_URL = os.environ.get("RETRIEVER_URL")
-E5_URL = os.environ.get("E5_URL")
 
 # Groq Configuration
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -86,21 +104,18 @@ BNB_CONFIG = {
 
 GROQ_SYSTEM_PROMPT = (
     "You are RezRag, a knowledgeable and helpful local food recommendation guide on the Yelp restaurant dataset.\n\n"
-    "Use ONLY the provided context. do not rely on outside knowledge. Do NOT invent restaurants, dishes, prices, or locations.\n"
-    "Be eloquent and offer long explanations, pull real details from the reviews to support each recommendation\n"
-    "Maintain a friendly, casual, conversational tone — like a knowledgeable local friend giving advice, not a structured report.\n\n"
-    "Use ONLY the provided context. Do not rely on outside knowledge. Do NOT invent restaurants, dishes, prices, or locations.\n\n"
-    "For each recommendation you may use this:\n"
-    "\n\n"
-    "**Restaurant Name** 📍 *address, city*\n"
-    "\n\n"
+    "Use ONLY the provided context. Do not rely on outside knowledge. Do NOT invent restaurants, dishes, prices, or locations.\n"
+    "Write with warmth and specific detail pulled from the reviews — atmosphere, a standout dish, a recurring compliment —"
+    " like a knowledgeable local friend giving advice. Keep it tight: a couple of sentences per point, not a full paragraph.\n\n"
+    "For each recommendation use this template:\n\n"
+    "**Restaurant Name** 📍 *address, city*\n\n"
     "🍽️ [2-3 sentences: what makes this place the right answer for THIS specific query. "
-    "Pull concrete details from the reviews — atmosphere, a specific dish, a recurring compliment. "
-    "Never use the phrase 'why it fits' or any generic filler.]\n\n"
+    "Pull concrete details from the reviews. Never use the phrase 'why it fits' or any generic filler.]\n\n"
     "🌟 **Must-try:** [specific dishes or features from the reviews and exactly why reviewers love it]\n\n"
     "💡 *Tip:* [actionable tips a local would actually give — best time to go, what to order first, what to skip etc]\n\n"
     "There MUST be a blank line between the description and the tip.\n\n"
-    "Keep each recommendation tight — no essays. Cover all spots without repeating yourself.\n\n"
+    "Keep the whole response under ~500 words so multi-restaurant answers don't run out of room mid-sentence."
+    " Cover all spots without repeating yourself.\n\n"
     "Always read the user query carefully and respect the constraints:\n"
     "   - Health conditions or discomfort → recommend "
     "light, fresh, easy-to-digest options. Skip restaurants with negative reviews or heavy/greasy/spicy food.\n"
@@ -123,28 +138,12 @@ GROQ_SYSTEM_PROMPT = (
     "   Reno & Spanish Springs (NV)\n"
     "   Edmonton & St. Albert (Alberta, Canada)\n"
     "   Santa Barbara & Goleta (CA)\n"
-    "   Boise & surrounding Idaho cities (ID)\n\n"
-    "If CONTEXT is empty or has 0 results:\n"
-    "   - If the query mentions a city/state outside coverage respond with exactly:\n"
-    "     'That location isn't covered in the Yelp dataset. I currently cover cities from:\n\n"
-    "📍 **Pennsylvania** — Philadelphia, King of Prussia, Norristown, Doylestown (PA)\n"
-    "📍 **California** — Santa Barbara, Goleta, Montecito, Carpinteria (CA)\n"
-    "📍 **New Jersey** — Cherry Hill, Camden, Voorhees, Haddonfield (NJ)\n"
-    "📍 **Florida** — Tampa, Clearwater, St. Petersburg, Brandon (FL)\n"
-    "📍 **Tennessee** — Nashville, Brentwood, Franklin, Hendersonville (TN)\n"
-    "📍 **Louisiana** — New Orleans, Metairie, Kenner, Chalmette (LA)\n"
-    "📍 **Indiana** — Indianapolis, Carmel, Fishers, Noblesville (IN)\n"
-    "📍 **Arizona** — Tucson, Oro Valley, Marana, Sahuarita (AZ)\n"
-    "📍 **Nevada** — Reno (NV)\n"
-    "📍 **Idaho** — Boise, Meridian, Eagle (ID)\n"
-    "📍 **Illinois** — Belleville, Collinsville, Mascoutah, Caseyville (IL)\n"
-    "📍 **Missouri** — Saint Louis, Chesterfield, Ballwin, Creve Coeur (MO)\n"
-    "📍 **Delaware** — Wilmington, Claymont, Christiana (DE)\n"
-    "📍 **Alberta** — Edmonton (AB)\n"
-    "     Try: *best tacos in Philadelphia* or *late night food in Nashville* 🍜'\n"
-    "   - If the query is within coverage but no results found, suggest rephrasing or a broader query.\n"
-    "If the query is a greeting or not about restaurants, respond in one sentence and ask what restaurant they are looking for.\n"
-    "If the query mentions a city outside your coverage, list supported cities and suggest a similar query.\n"
+    "   Boise & surrounding Idaho cities (ID)\n"
+    "   Illinois, Missouri, and Delaware (Saint Louis, Belleville, Wilmington and surrounding areas)\n\n"
+    "Out-of-coverage and non-food queries are intercepted before you ever see them, so you will only be called with a"
+    " genuine, in-coverage food query. If CONTEXT is still empty for one, the query was probably too narrow or unusual"
+    " for anything in the dataset — say so honestly and suggest rephrasing or broadening it. Do not claim the location"
+    " itself is uncovered.\n"
 )
 
 
@@ -325,6 +324,15 @@ COVERED_AREAS = [
     "santa barbara",
     "boise",
     "fort myers",
+    "saint louis",
+    "wilmington",
+    "belleville",
+    "philly",
+    "nola",
+    "indy",
+    "st louis",
+    "st. louis",
+    "stl",
     # States/provinces in dataset
     "pennsylvania",
     "florida",
@@ -336,6 +344,9 @@ COVERED_AREAS = [
     "alberta",
     "california",
     "idaho",
+    "illinois",
+    "missouri",
+    "delaware",
     # NJ is covered via Philly metro
     "new jersey",
     "nj",
@@ -349,6 +360,9 @@ COVERED_AREAS = [
     "nv",
     "ca",
     "id",
+    "il",
+    "mo",
+    "de",
 ]
 OUT_OF_COVERAGE = [
     # International
@@ -994,3 +1008,77 @@ NON_FOOD_PATTERNS = [
     # ── App insults ───────────────────────────────────────────────────────────
     r"\b(you suck|this sucks|hate (you|this)|worst (app|bot|thing)|garbage|trash|stupid bot)\b",
 ]
+
+NON_RETRIEVAL_INTENTS = {"greeting", "identity", "off_topic"}
+
+INTENT_RESPONSE_MAP = {
+    "greeting": (
+        "Hi! I'm RezRag, a restaurant recommendation assistant powered by real Yelp reviews 🍽️\n\n"
+        "Try asking:\n"
+        "- *Best tacos in Philadelphia*\n"
+        "- *Romantic Italian dinner in Nashville*\n"
+        "- *Late night ramen in Tampa*\n"
+        "- *Casual Indian restaurants in Pennsylvania*\n\n"
+        "I cover cities across: \n"
+        "📍 **Pennsylvania** — Philadelphia, King of Prussia, Norristown, Doylestown (PA)\n"
+        "📍 **California** — Santa Barbara, Goleta, Montecito, Carpinteria (CA)\n"
+        "📍 **New Jersey** — Cherry Hill, Camden, Voorhees, Haddonfield (NJ)\n"
+        "📍 **Florida** — Tampa, Clearwater, St. Petersburg, Brandon (FL)\n"
+        "📍 **Tennessee** — Nashville, Brentwood, Franklin, Hendersonville (TN)\n"
+        "📍 **Louisiana** — New Orleans, Metairie, Kenner, Chalmette (LA)\n"
+        "📍 **Indiana** — Indianapolis, Carmel, Fishers, Noblesville (IN)\n"
+        "📍 **Arizona** — Tucson, Oro Valley, Marana, Sahuarita (AZ)\n"
+        "📍 **Nevada** — Reno (NV)\n"
+        "📍 **Idaho** — Boise, Meridian, Eagle (ID)\n"
+        "📍 **Illinois** — Belleville, Collinsville, Mascoutah, Caseyville (IL)\n"
+        "📍 **Missouri** — Saint Louis, Chesterfield, Ballwin, Creve Coeur (MO)\n"
+        "📍 **Delaware** — Wilmington, Claymont, Christiana (DE)\n"
+        "📍 **Alberta** — Edmonton (AB)\n"
+    ),
+    "identity": (
+        "Hi! I'm RezRag, a restaurant recommendation assistant powered by real Yelp reviews 🍽️\n\n"
+        "Try asking:\n"
+        "- *Best tacos in Philadelphia*\n"
+        "- *Romantic Italian dinner in Nashville*\n"
+        "- *Late night ramen in Tampa*\n"
+        "- *Casual Indian restaurant in Pennsylvania*\n\n"
+        "I cover cities across: \n"
+        "📍 **Pennsylvania** — Philadelphia, King of Prussia, Norristown, Doylestown (PA)\n"
+        "📍 **California** — Santa Barbara, Goleta, Montecito, Carpinteria (CA)\n"
+        "📍 **New Jersey** — Cherry Hill, Camden, Voorhees, Haddonfield (NJ)\n"
+        "📍 **Florida** — Tampa, Clearwater, St. Petersburg, Brandon (FL)\n"
+        "📍 **Tennessee** — Nashville, Brentwood, Franklin, Hendersonville (TN)\n"
+        "📍 **Louisiana** — New Orleans, Metairie, Kenner, Chalmette (LA)\n"
+        "📍 **Indiana** — Indianapolis, Carmel, Fishers, Noblesville (IN)\n"
+        "📍 **Arizona** — Tucson, Oro Valley, Marana, Sahuarita (AZ)\n"
+        "📍 **Nevada** — Reno (NV)\n"
+        "📍 **Idaho** — Boise, Meridian, Eagle (ID)\n"
+        "📍 **Illinois** — Belleville, Collinsville, Mascoutah, Caseyville (IL)\n"
+        "📍 **Missouri** — Saint Louis, Chesterfield, Ballwin, Creve Coeur (MO)\n"
+        "📍 **Delaware** — Wilmington, Claymont, Christiana (DE)\n"
+        "📍 **Alberta** — Edmonton (AB)\n"
+    ),
+    "off_topic": (
+        "I'm specialized in restaurant recommendations! "
+        "Try asking about food in any of my covered cities 🍜"
+    ),
+}
+
+COVERAGE_MESSAGE = (
+    "That location isn't covered in the Yelp dataset. I currently cover cities from:\n\n"
+    "📍 **Pennsylvania** — Philadelphia, King of Prussia, Norristown, Doylestown (PA)\n"
+    "📍 **California** — Santa Barbara, Goleta, Montecito, Carpinteria (CA)\n"
+    "📍 **New Jersey** — Cherry Hill, Camden, Voorhees, Haddonfield (NJ)\n"
+    "📍 **Florida** — Tampa, Clearwater, St. Petersburg, Brandon (FL)\n"
+    "📍 **Tennessee** — Nashville, Brentwood, Franklin, Hendersonville (TN)\n"
+    "📍 **Louisiana** — New Orleans, Metairie, Kenner, Chalmette (LA)\n"
+    "📍 **Indiana** — Indianapolis, Carmel, Fishers, Noblesville (IN)\n"
+    "📍 **Arizona** — Tucson, Oro Valley, Marana, Sahuarita (AZ)\n"
+    "📍 **Nevada** — Reno (NV)\n"
+    "📍 **Idaho** — Boise, Meridian, Eagle (ID)\n"
+    "📍 **Illinois** — Belleville, Collinsville, Mascoutah, Caseyville (IL)\n"
+    "📍 **Missouri** — Saint Louis, Chesterfield, Ballwin, Creve Coeur (MO)\n"
+    "📍 **Delaware** — Wilmington, Claymont, Christiana (DE)\n"
+    "📍 **Alberta** — Edmonton (AB)\n"
+    "Try: *best tacos in Philadelphia* or *late night food in Nashville* 🍜"
+)

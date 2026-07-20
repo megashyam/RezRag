@@ -2,29 +2,17 @@ import torch
 import math
 import uuid
 import pandas as pd
-from typing import List
-from tqdm import tqdm
+import logging
+from typing import Generator, List
 
-from qdrant_client import QdrantClient
-from qdrant_client.http import models
+from qdrant_client import QdrantClient, models
+from qdrant_client.http.exceptions import UnexpectedResponse
+from tqdm.auto import tqdm
 
 from data_pipeline.preprocessor import YelpRestaurantPipeline
 from data_pipeline.chunker import YelpChunking
 from data_pipeline.embedder import YelpEmbedder
 
-# Import Config
-import config
-import pandas as pd
-import torch
-import uuid
-import logging
-import math
-from typing import Generator, List
-from tqdm.auto import tqdm
-from qdrant_client import QdrantClient, models
-from qdrant_client.http.exceptions import UnexpectedResponse
-
-# Import Config
 import config
 
 # Setup Logging
@@ -73,7 +61,7 @@ class YelpIngestorQdrant:
 
         # Create Payload Indexes for fast filtering
         logger.info("Verifying indexes...")
-        for field in ["doc_id", "state_abbr", "city", "restaurant"]:
+        for field in ["doc_id", "state", "city", "restaurant", "chunk_id"]:
             self.client.create_payload_index(
                 collection_name=config.COLLECTION_NAME,
                 field_name=field,
@@ -141,14 +129,11 @@ class YelpIngestorQdrant:
 
             points = []
             for idx, (row_idx, row) in enumerate(batch_df.iterrows()):
-                # Create stable UUID based on DocID + Index
-                # Using row_idx from dataframe to ensure stability even if batched
-                point_id = str(
-                    uuid.uuid5(uuid.NAMESPACE_DNS, f"{config.DOC_ID}_{row_idx}")
-                )
-
                 payload = row.to_dict()
-                # print(payload)
+                chunk_id = payload.get("chunk_id", str(row_idx))
+                point_id = str(
+                    uuid.uuid5(uuid.NAMESPACE_DNS, f"{config.DOC_ID}_{chunk_id}")
+                )
                 payload["doc_id"] = config.DOC_ID
                 # Rename 'chunk' to 'text_content' if preferred, or keep as is
                 payload["text_content"] = payload.pop("chunk", "")

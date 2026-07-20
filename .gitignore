@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+data/*.pkl
+data/*.parquet
+data/*.pt
+data/*.csv
+data/query_cache/
+yelp_academic_dataset_*.json
+.env

@@ -395,7 +395,7 @@ def name_match(returned: str, expected: str) -> bool:
         return True
 
     if len(r) >= 3 and len(e) >= 3:
-        if r.startswith(e) or e.startswith(r):
+        if r.startswith(e + " ") or e.startswith(r + " "):
             return True
     r_tok, e_tok = set(r.split()), set(e.split())
     shorter = r_tok if len(r_tok) <= len(e_tok) else e_tok

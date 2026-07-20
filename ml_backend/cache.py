@@ -28,20 +28,46 @@ def get_cache() -> dc.Cache:
     return _cache
 
 
-def _key(query: str, top_k: int, do_rerank: bool) -> str:
-    raw = f"{query.lower().strip()}|{top_k}|{do_rerank}"
+def _key(
+    query: str,
+    top_k: int,
+    do_rerank: bool,
+    k_rrf: int = 60,
+    initial_k: int = 100,
+    max_duplicates: int = 2,
+) -> str:
+    raw = f"{query.lower().strip()}|{top_k}|{do_rerank}|{k_rrf}|{initial_k}|{max_duplicates}"
     return "rag:" + hashlib.sha256(raw.encode()).hexdigest()
 
 
-def get_cached(query: str, top_k: int, do_rerank: bool):
-    hit = get_cache().get(_key(query, top_k, do_rerank))
+def get_cached(
+    query: str,
+    top_k: int,
+    do_rerank: bool,
+    k_rrf: int = 60,
+    initial_k: int = 100,
+    max_duplicates: int = 2,
+):
+    hit = get_cache().get(_key(query, top_k, do_rerank, k_rrf, initial_k, max_duplicates))
     if hit is not None:
         logger.info(f"[CACHE HIT]  '{query[:60]}'")
     return hit
 
 
-def set_cached(query: str, top_k: int, do_rerank: bool, results: list) -> None:
-    get_cache().set(_key(query, top_k, do_rerank), results, expire=CACHE_TTL)
+def set_cached(
+    query: str,
+    top_k: int,
+    do_rerank: bool,
+    results: list,
+    k_rrf: int = 60,
+    initial_k: int = 100,
+    max_duplicates: int = 2,
+) -> None:
+    get_cache().set(
+        _key(query, top_k, do_rerank, k_rrf, initial_k, max_duplicates),
+        results,
+        expire=CACHE_TTL,
+    )
     logger.debug(
         f"[CACHE SET]  '{query[:60]}'  ({len(results)} results, ttl={CACHE_TTL}s)"
     )

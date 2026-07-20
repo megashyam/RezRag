@@ -2,10 +2,10 @@ import pandas as pd
 import numpy as np
 import re
 import ast
-import tiktoken
 import logging
 from tqdm.auto import tqdm
 from typing import List, Dict, Any
+from transformers import AutoTokenizer
 
 import config
 
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 class YelpChunking:
     def __init__(self):
-        self.enc = tiktoken.get_encoding(config.TOKEN_ENCODING)
+        self.enc = AutoTokenizer.from_pretrained(config.EMBEDDING_MODEL_NAME)
         self.preprocessed_path = config.DATA_DIR / "preprocessed.pkl"
         self.output_path = config.DATA_DIR / "chunked_data.pkl"
         self.df = None
@@ -31,78 +31,63 @@ class YelpChunking:
         t = re.sub(r"\s+", " ", t)
         return t.strip()
 
-    def _parse_attributes(self, attr_str: str) -> List[str]:
-        """Parses the nested string dictionary for facility attributes."""
-        features = []
+    @staticmethod
+    def _parse_attribute_dict(attr_str) -> dict:
         if pd.isna(attr_str):
-            return []
-
+            return {}
         try:
-            # Safely evaluate string to dict
             data = (
                 attr_str if isinstance(attr_str, dict) else ast.literal_eval(attr_str)
             )
-            if not isinstance(data, dict):
-                return []
-
-            for k, v in data.items():
-                val_str = str(v).strip().lower()
-
-                if k in config.BOOL_ATTRIBUTES and val_str == "true":
-                    features.append(config.ATTRIBUTE_MAP[k])
-
-                elif (
-                    k in config.ALCOHOL_KEYS
-                    and str(v) not in config.ALCOHOL_SKIP_VALUES
-                ):
-                    features.append("Serves Alcohol")
-
+            return data if isinstance(data, dict) else {}
         except (ValueError, SyntaxError):
-            return []
+            return {}
+
+    @staticmethod
+    def _parse_attributes(attrs: dict) -> List[str]:
+        """Parses facility attributes from an already-parsed attribute dict."""
+        features = []
+        for k, v in attrs.items():
+            val_str = str(v).strip().lower()
+
+            if k in config.BOOL_ATTRIBUTES and val_str == "true":
+                features.append(config.ATTRIBUTE_MAP[k])
+            elif k in config.ALCOHOL_KEYS and str(v) not in config.ALCOHOL_SKIP_VALUES:
+                features.append("Serves Alcohol")
+
         return features
 
-    def _parse_vibes(self, attr_str: str) -> List[str]:
-        """Parses nested dictionary for vibe keywords."""
+    @staticmethod
+    def _parse_vibes(attrs: dict) -> List[str]:
+        """Parses vibe keywords from an already-parsed attribute dict."""
         vibes = []
-        if pd.isna(attr_str):
-            return []
-
-        try:
-            data = (
-                attr_str if isinstance(attr_str, dict) else ast.literal_eval(attr_str)
-            )
-            if not isinstance(data, dict):
-                return []
-
-            for k, v in data.items():
-                if isinstance(v, str) and "{" in v:
-                    try:
-                        inner = ast.literal_eval(v)
-                        if isinstance(inner, dict):
-                            for vibe_k, vibe_v in inner.items():
-                                if (
-                                    vibe_k in config.VIBE_KEYWORDS
-                                    and str(vibe_v).lower() == "true"
-                                ):
-                                    vibes.append(vibe_k)
-                    except:
-                        continue
-        except:
-            return []
+        for k, v in attrs.items():
+            if isinstance(v, str) and "{" in v:
+                try:
+                    inner = ast.literal_eval(v)
+                except (ValueError, SyntaxError):
+                    continue
+                if isinstance(inner, dict):
+                    for vibe_k, vibe_v in inner.items():
+                        if (
+                            vibe_k in config.VIBE_KEYWORDS
+                            and str(vibe_v).lower() == "true"
+                        ):
+                            vibes.append(vibe_k)
         return vibes
 
-    def _create_review_batches(self, reviews: List[str], header: str) -> List[str]:
-        """
-        Batches reviews into chunks that fit within the token limit.
-        Optimized to use fewer tiktoken calls.
-        """
+    def _create_review_batches(
+        self, reviews: List[str], header: str, max_single_review_tokens: int = 300
+    ) -> List[str]:
+        """Batches reviews into chunks that fit within the token limit, tokenized
+        with the embedding model's own tokenizer so the budget matches what the
+        embedder actually sees."""
         if not reviews or not isinstance(reviews, list):
             return []
 
-        header_tokens = len(self.enc.encode(header))
+        header_tokens = len(self.enc.encode(header, add_special_tokens=False))
         chunks = []
         current_batch = []
-
         current_cost = header_tokens
 
         for r in reviews:
@@ -110,12 +95,11 @@ class YelpChunking:
             if not r:
                 continue
 
-            est_tokens = len(r) // 3
-
-            if current_cost + est_tokens < config.CHUNK_MAX_TOKENS - 50:
-                token_cost = est_tokens
-            else:
-                token_cost = len(self.enc.encode(r)) + config.OVERHEAD_TOKENS
+            token_ids = self.enc.encode(r, add_special_tokens=False)
+            if len(token_ids) > max_single_review_tokens:
+                token_ids = token_ids[:max_single_review_tokens]
+                r = self.enc.decode(token_ids, skip_special_tokens=True)
+            token_cost = len(token_ids) + config.OVERHEAD_TOKENS
 
             if current_cost + token_cost <= config.CHUNK_MAX_TOKENS:
                 current_batch.append(r)
@@ -144,31 +128,31 @@ class YelpChunking:
         state = row["state"]
 
         # 1. Metadata Chunks
-        meta_chunks = []
+        profile_chunks = []
 
-        # Business Profile
         biz_text = (
             f"passage: {name} is a {row['categories']} restaurant "
             f"located at {row['address']} in {city}, {state}."
         )
-        meta_chunks.append(biz_text)
+        profile_chunks.append(biz_text)
 
-        # Attributes
-        attrs = self._parse_attributes(row["attributes"])
-        if attrs:
-            attr_text = f"passage: {name} provides features such as {', '.join(attrs)}."
-            meta_chunks.append(attr_text)
+        attrs = self._parse_attribute_dict(row["attributes"])
 
-        # Vibes
-        vibes = self._parse_vibes(row["attributes"])
+        features = self._parse_attributes(attrs)
+        if features:
+            attr_text = (
+                f"passage: {name} provides features such as {', '.join(features)}."
+            )
+            profile_chunks.append(attr_text)
+
+        vibes = self._parse_vibes(attrs)
         if vibes:
             vibe_text = (
                 f"passage: The atmosphere at {name} is described as {', '.join(vibes)}."
             )
-            meta_chunks.append(vibe_text)
+            profile_chunks.append(vibe_text)
 
         # 2. Review Chunks
-
         pos_header = f"passage: positive customer reviews for {name} in {city}, {state} mention:\n "
         neu_header = f"passage: neutral customer reviews for {name} in {city}, {state} mention:\n "
         neg_header = f"passage: negative customer reviews for {name} in {city}, {state} mention:\n "
@@ -177,30 +161,18 @@ class YelpChunking:
         chunked_neu = self._create_review_batches(row.get("neutral", []), neu_header)
         chunked_neg = self._create_review_batches(row.get("negative", []), neg_header)
 
-        # Return as object to be unpacked
-        return pd.Series(
-            [
-                chunked_pos,
-                chunked_neu,
-                chunked_neg,
-                meta_chunks + chunked_pos + chunked_neu + chunked_neg,
-            ]
-        )
+        return pd.Series([profile_chunks, chunked_pos, chunked_neu, chunked_neg])
 
     def load_and_format(self):
         logger.info(f"Loading data from {self.preprocessed_path}...")
         self.df = pd.read_pickle(self.preprocessed_path)
 
-        # Basic cleanup
         self.df["categories"] = (
             self.df["categories"]
             .astype(str)
             .str.replace("Restaurants,", "", regex=False)
         )
-        print(self.df.iloc[4])
-
-        print(self.df.info())
-        logger.info(f"Loaded {len(self.df)} restaurants.")
+        logger.info(f"Loaded {len(self.df)} restaurants, columns: {list(self.df.columns)}")
 
     def run(self):
         self.load_and_format()
@@ -208,8 +180,14 @@ class YelpChunking:
         logger.info("Generating Chunks (Single Pass)...")
         tqdm.pandas(desc="Processing Rows")
 
-        cols = ["chunked_pos", "chunked_neu", "chunked_neg", "all_chunks_flat"]
+        cols = ["chunked_profile", "chunked_pos", "chunked_neu", "chunked_neg"]
         self.df[cols] = self.df.progress_apply(self.process_row, axis=1)
+
+        n_empty = (
+            self.df[cols].apply(lambda row: sum(len(c) for c in row) == 0, axis=1).sum()
+        )
+        if n_empty:
+            logger.warning(f"{n_empty} restaurants produced zero chunks.")
 
         logger.info("Saving chunks...")
 
@@ -221,6 +199,7 @@ class YelpChunking:
             "address",
             "latitude",
             "longitude",
+            "chunked_profile",
             "chunked_pos",
             "chunked_neu",
             "chunked_neg",

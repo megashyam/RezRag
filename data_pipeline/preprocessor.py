@@ -103,12 +103,16 @@ class YelpRestaurantPipeline:
         if not path.exists():
             raise FileNotFoundError(f"Business file not found at {path}")
 
+        n_corrupt = 0
         with open(path, "rb") as f:
             for line in f:
                 try:
                     data.append(orjson.loads(line))
                 except orjson.JSONDecodeError:
-                    continue
+                    n_corrupt += 1
+
+        if n_corrupt:
+            logger.warning(f"Skipped {n_corrupt} corrupted/unparseable business records.")
 
         df = pd.DataFrame(data)
 
@@ -166,6 +170,7 @@ class YelpRestaurantPipeline:
 
         min_date_str = f"{config.FILTER_YEAR}-01-01"
 
+        n_corrupt = 0
         with open(path, "rb") as f:
 
             for line in tqdm(f, desc="Reading Reviews", unit="lines", smoothing=0):
@@ -195,7 +200,10 @@ class YelpRestaurantPipeline:
                     )
 
                 except orjson.JSONDecodeError:
-                    continue
+                    n_corrupt += 1
+
+        if n_corrupt:
+            logger.warning(f"Skipped {n_corrupt} corrupted/unparseable review records.")
 
         self.reviews_df = pd.DataFrame(reviews_dict)
         logger.info(f"Loaded {len(self.reviews_df)} relevant reviews.")
@@ -207,13 +215,15 @@ class YelpRestaurantPipeline:
         # Aggregate review stats
         stat_df = (
             self.reviews_df.groupby("business_id")["stars"]
-            .agg(["sum", "mean"])
+            .agg(["sum", "mean", "count"])
+            .rename(columns={"count": "filtered_review_count"})
             .reset_index()
         )
         stat_df["reviews_score"] = stat_df["mean"] * np.log1p(stat_df["sum"])
 
         # Merge
         top_merged = pd.merge(self.business_df, stat_df, on="business_id", how="left")
+        top_merged["filtered_review_count"] = top_merged["filtered_review_count"].fillna(0)
 
         # Normalize
         scaler = MinMaxScaler()
@@ -233,14 +243,14 @@ class YelpRestaurantPipeline:
             + config.REVIEWS_COEFF * top_merged["reviews_score_norm"]
         )
 
-        # Filter by minimum review count
+        # Filter by minimum review count. review_count is Yelp's raw, all-time
+        # count; filtered_review_count is how many reviews actually survived the
+        # date/word-count filters upstream — a restaurant needs enough of both,
+        # otherwise it gets selected with no review content to chunk.
         base = top_merged[
-            top_merged["review_count"] > config.REVIEW_COUNTS_PER_RESTAURANT
+            (top_merged["review_count"] > config.REVIEW_COUNTS_PER_RESTAURANT)
+            & (top_merged["filtered_review_count"] >= config.MIN_FILTERED_REVIEWS)
         ]
-
-        # Filter by dynamic limit
-        if (base["dynamic_limit"] >= config.MIN_DYNAMIC_LIMIT).any():
-            base = base[base["dynamic_limit"] >= config.MIN_DYNAMIC_LIMIT]
 
         # Sort
         top_merged_sorted = base.sort_values(
@@ -259,10 +269,12 @@ class YelpRestaurantPipeline:
                 pd.DataFrame: Top N performing restaurants for the given city.
             """
             n = int(group["dynamic_limit"].iloc[0])
-            return group.nlargest(n, "weighted_combined_score")
+            top = group.nlargest(n, "weighted_combined_score").copy()
+            top["city"] = group.name
+            return top
 
         self.final_df = top_merged_sorted.groupby("city", group_keys=False).apply(
-            get_top_n
+            get_top_n, include_groups=False
         )
 
         # Add stats back to final df for clarity
@@ -290,7 +302,7 @@ class YelpRestaurantPipeline:
         # Cap candidates per business
         candidates = filtered_reviews.groupby("business_id").head(
             config.TOP_RESTAURANTS_PER_CITY
-        )
+        ).copy()
         candidates["sentiment"] = candidates["stars"].apply(self._get_sentiment)
 
         # Sampling Logic
@@ -317,10 +329,13 @@ class YelpRestaurantPipeline:
                     # Safe sample
                     avail = group[group["sentiment"] == sentiment]
                     sampled.append(avail.sample(n=min(n, len(avail)), random_state=42))
-            return pd.concat(sampled) if sampled else pd.DataFrame()
+            out = pd.concat(sampled) if sampled else pd.DataFrame()
+            if not out.empty:
+                out["business_id"] = group.name
+            return out
 
         self.top_reviews_df = candidates.groupby("business_id", group_keys=False).apply(
-            sample_balanced_reviews
+            sample_balanced_reviews, include_groups=False
         )
 
     def _build_final_output(self):
@@ -344,7 +359,7 @@ class YelpRestaurantPipeline:
                 pivot_reviews[col] = np.nan
 
         # Convert NaNs to empty lists
-        pivot_reviews = pivot_reviews.applymap(
+        pivot_reviews = pivot_reviews.map(
             lambda x: x if isinstance(x, list) else []
         )
 
@@ -373,8 +388,9 @@ class YelpRestaurantPipeline:
             self._score_and_rank()
             self._select_top_reviews()
             self._build_final_output()
-        except Exception as e:
-            logger.error(f"Pipeline failed: {e}", exc_info=True)
+        except Exception:
+            logger.error("Pipeline failed.", exc_info=True)
+            raise
 
 
 if __name__ == "__main__":

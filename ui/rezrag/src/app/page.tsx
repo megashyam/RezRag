@@ -352,10 +352,10 @@ export default function Home() {
         }}>
           <span style={{ fontWeight: 600, color: "var(--text-2)" }}>📍 The Yelp Dataset only covers</span>
           {" · "}
-          Philadelphia · Nashville · Tampa · New Orleans · Indianapolis · Tucson · Reno · Boise · Santa Barbara · Edmonton
+          Philadelphia · Nashville · Tampa · New Orleans · Indianapolis · Tucson · Reno · Boise · Santa Barbara · Edmonton · Saint Louis · Wilmington · Belleville
           <br />
           <span style={{ fontSize: 11, fontStyle: "italic" }}>
-            + surrounding suburbs across PA, NJ, FL, TN, LA, IN, AZ, NV, ID, CA & Alberta
+            + surrounding suburbs across PA, NJ, FL, TN, LA, IN, AZ, NV, ID, CA, IL, MO, DE & Alberta
           </span>
         </div>
 
@@ -393,12 +393,13 @@ export default function Home() {
             {[
               { step: "01", label: "Raw Yelp JSON", detail: "~10GB, multi-file, messy" },
               { step: "02", label: "Clean + Score + Sample", detail: "Custom restaurant scoring, balanced sentiment" },
-              { step: "03", label: "Tiktoken Chunking", detail: "Typed chunks — profile, positive, negative" },
-              { step: "04", label: "E5-large-v2 Embeddings", detail: "1024-dim dense vectors + BM25 sparse index" },
+              { step: "03", label: "E5-Tokenizer Chunking", detail: "Typed chunks — profile, positive, negative" },
+              { step: "04", label: "E5-large-v2 Embeddings", detail: "1024-dim dense vectors + full-corpus BM25 index" },
               { step: "05", label: "Qdrant Ingestion", detail: "UUID5 stable IDs, generator-based batching" },
-              { step: "06", label: "Hybrid Search + RRF", detail: "Dense + sparse fusion, no framework" },
-              { step: "07", label: "CrossEncoder Rerank", detail: "ms-marco-MiniLM-L-6-v2, 400-char truncation" },
-              { step: "08", label: "Qwen 3 32B via Groq(For production)", detail: "Streaming , token-by-token" },
+              { step: "06", label: "Intent Classification", detail: "llama-3.1-8b-instant via Groq routes before retrieval" },
+              { step: "07", label: "Hybrid Search + RRF", detail: "Dense + full-corpus sparse fusion, no framework" },
+              { step: "08", label: "CrossEncoder Rerank", detail: "ms-marco-MiniLM-L-6-v2, own 512-token tokenizer" },
+              { step: "09", label: "Qwen 3 32B via Groq (For production)", detail: "Streaming , token-by-token" },
             ].map(({ step, label, detail }, i, arr) => (
               <div key={step} style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
                 {/* Step number + connector */}
@@ -459,9 +460,9 @@ export default function Home() {
             }}>
               {[
                 { layer: "Data", items: ["orjson 3–5× faster than stdlib json", "Filter cascade: O(1) set → date string → word count", "df.melt() + df.explode() — C-level vectorization", "Generator-based Qdrant ingestion — flat RAM"] },
-                { layer: "Chunking", items: ["len(text)//3 fast token estimation", "tiktoken.encode() only on borderline chunks", "Single-pass progress_apply — no intermediate DataFrames"] },
-                { layer: "Retrieval", items: ["400-char doc truncation — quadratic attention cost", "BM25 on candidate subset only, not full corpus", "spaCy NER geo-filter cuts Qdrant search space"] },
-                { layer: "Deployment", items: ["Modal Volume — models cached, not re-downloaded", "keep_warm=1 — one container always hot", "Qdrant co-located in same GCP region as Modal", "6-hour query cache — repeated queries skip retrieval"] },
+                { layer: "Chunking", items: ["Tokenized with the embedding model's own tokenizer, not a mismatched one", "Over-long single reviews truncated instead of blowing the token budget", "Single-pass progress_apply — no intermediate DataFrames"] },
+                { layer: "Retrieval", items: ["Full-corpus BM25 fused with dense search — not just a rescore of the dense shortlist", "Reranker truncates via its own 512-token tokenizer, not a fixed char cutoff", "spaCy NER geo-filter cuts Qdrant search space"] },
+                { layer: "Deployment", items: ["Modal Volume — models cached, not re-downloaded", "keep_warm=1 — one container always hot", "Qdrant co-located in same GCP region as Modal", "6-minute query cache — repeated queries skip retrieval"] },
                 { layer: "Frontend", items: ["setTimeout(fn,30) — token updates batched to ~60fps", "Leaflet lazy-loaded (ssr:false) — no SSR crash", "Health check via API route — no CORS on Modal calls"] },
               ].map(({ layer, items }) => (
                 <div key={layer}>
