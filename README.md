@@ -150,7 +150,7 @@ Generator Microservice (FastAPI)
          ↓ greeting / identity / off_topic → short-circuit, no retrieval
     → Coverage Guard (COVERED_AREAS / OUT_OF_COVERAGE blocklists)
          ↓ out-of-coverage → short-circuit, no retrieval
-    → Groq API (Qwen3-32B, production)
+    → Groq API (gpt-oss-20b, production)
     → Local Qwen2.5-3B NF4 (offline mode)
          ↓
 Next.js Frontend (Vercel)
@@ -277,7 +277,7 @@ Both layers use raw location detection (NER + regex) that is **not** filtered ag
 Two generator paths are implemented production uses Groq, local runs a fully quantized model offline.
 
 ### Production - Groq API
-`Qwen3-32B` via Groq. Zero GPU cost, zero VRAM. Response is currently buffered by Modal's ASGI proxy — full response arrives after ~4s rather than true token streaming.
+`gpt-oss-20b` via Groq. Zero GPU cost, zero VRAM. Response is currently buffered by Modal's ASGI proxy — full response arrives after ~4s rather than true token streaming.
 
 | Metric | Value |
 |:---|:---|
@@ -320,7 +320,7 @@ BitsAndBytesConfig(
 
 | Path | Model | VRAM | TTFT (warm) | Tokens/sec | Streaming |
 |:---|:---|:---|:---|:---|:---|
-| Production | Qwen3-32B via Groq | 0 | ~4s | N/A (buffered) | Buffered |
+| Production | gpt-oss-20b via Groq | 0 | ~4s | N/A (buffered) | Buffered |
 | Local | Qwen2.5-3B NF4 | 2.2GB | ~3.7s | 11.8 | Real token stream |
 | Local (attempted) | Qwen2.5-7B NF4 | 6GB+ (CPU offload) | ~58s | 0.6 | — |
 
@@ -409,7 +409,7 @@ Next.js on Vercel. Token streaming, interactive Leaflet map, restaurant cards wi
 | Path | Generator | Total |
 |:---|:---|:---|
 | Production (Groq) | ~4s buffered | ~5–6s |
-| Local (Qwen2.5-3B NF4) | ~3.7s TTFT + ~60s generation | ~64s |
+| Local (2.5-3B NF4) | ~3.7s TTFT + ~60s generation | ~64s |
 
 Variance is inherent to free-tier serverless infrastructure. A paid Qdrant cluster + dedicated CPU would bring down retrieval time consistently.
 
@@ -424,7 +424,7 @@ RezRag/
 │   ├── config.py             # Centralized configuration
 │   ├── retriever.py          # Hybrid search, RRF, geo-filter (FastAPI)
 │   ├── generator_groq.py     # Groq generator, production (FastAPI)
-│   ├── generator_local.py    # Local quantized Qwen generator (FastAPI)
+│   ├── generator_local.py    # Local quantized  generator (FastAPI)
 │   ├── cache.py              # diskcache SQLite query result cache
 │   ├── observability.py      # Prometheus metrics + loguru logging
 │   ├── evaluation.py         # MRR, Hit@K, P@K, bootstrap CI (+ optional MLflow logging)
@@ -485,7 +485,7 @@ QDRANT_URL=http://localhost:6333
 QDRANT_API_KEY=
 RETRIEVER_URL=http://127.0.0.1:8000/retrieve
 GROQ_API_KEY=gsk_...
-GROQ_MODEL_ID=qwen3-32b
+GROQ_MODEL_ID=gpt-oss-20b
 ```
 
 `.env.local` (frontend):
