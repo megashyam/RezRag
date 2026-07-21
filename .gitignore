@@ -8,3 +8,7 @@ data/*.csv
 data/query_cache/
 yelp_academic_dataset_*.json
 .env
+/mlruns/
+.deepeval*/
+.deepeval-cache.json
+airflow.db

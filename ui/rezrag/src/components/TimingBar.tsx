@@ -43,7 +43,7 @@ export function TimingBar({ meta }: { meta: QueryMeta }) {
                     borderColor: "rgba(232,96,38,0.3)",
                     color: "#e86026",
                 }}>
-                    ⚡ {seconds}s retrieval
+                    ⚡ {seconds}s retrieval(Free-Tier)
                 </span>)}
 
             <span className="timing-pill" style={{

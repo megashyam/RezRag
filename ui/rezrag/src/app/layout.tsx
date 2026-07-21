@@ -11,7 +11,7 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 
 export const metadata: Metadata = {
   title: "RezRag",
-  description: "Qwen 2.5 RAG powered restaurant discovery",
+  description: "RAG powered restaurant discovery",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -58,7 +58,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     RezRag
                   </p>
                   <p style={{ margin: 0, fontSize: 10, color: "var(--text-3)", letterSpacing: "0.08em", textTransform: "uppercase", marginTop: 2 }}>
-                    Qwen 2.5
+                    RAG-powered restaurant discovery
                   </p>
                 </div>
               </Link>

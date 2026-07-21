@@ -1,8 +1,35 @@
 # RezRag: Production-Grade RAG System on the Yelp Business Review Dataset Entirely from Scratch
 
-**RezRag** is a high-performance Retrieval-Augmented Generation (RAG) system engineered to provide grounded, location-aware restaurant recommendations  **built entirely from scratch without LangChain, LlamaIndex, or any RAG framework.** It leverages a **Hybrid Search Architecture** (Dense Vectors + Sparse Keywords) fused with a Cross-Encoder Reranker to retrieve precise context from the Yelp Academic Dataset, which is then synthesized by a 4-bit quantized LLM.
+**RezRag** is a high-performance Retrieval-Augmented Generation (RAG) system engineered to provide grounded, location-aware restaurant recommendations  **built entirely from scratch without LangChain.** It leverages a **Hybrid Search Architecture** (Dense Vectors + Sparse Keywords) fused with a Cross-Encoder Reranker to retrieve precise context from the Yelp Academic Dataset, which is then synthesized by a 4-bit quantized LLM.
 
 The system is architected as a set of decoupled, asynchronous microservices to ensure scalability and fault tolerance.
+
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-Deep%20Learning-EE4C2C?logo=pytorch&logoColor=white)
+![Hugging Face](https://img.shields.io/badge/Hugging%20Face-Models%20%26%20Inference-FFD21E?logo=huggingface&logoColor=black)
+![Transformers](https://img.shields.io/badge/Transformers-NLP%20Models-FFD21E?logo=huggingface&logoColor=black)
+![Sentence Transformers](https://img.shields.io/badge/Sentence%20Transformers-Embedding%20Models-FF6F00)
+![Qwen](https://img.shields.io/badge/Qwen-LLM%20Models-7B3FE4)
+![GPT-OSS](https://img.shields.io/badge/GPT--OSS-OpenAI%20Models-412991?logo=openai&logoColor=white)
+![PEFT](https://img.shields.io/badge/PEFT-LoRA%20%7C%20QLoRA-FFB000)
+![BitsAndBytes](https://img.shields.io/badge/BitsAndBytes-Quantization-FF6F00)
+![RAG](https://img.shields.io/badge/RAG-Retrieval%20Augmented%20Generation-4285F4)
+![Qdrant](https://img.shields.io/badge/Qdrant-Vector%20Database-DC244C)
+![spaCy](https://img.shields.io/badge/spaCy-NLP-09A3D5)
+![FastAPI](https://img.shields.io/badge/FastAPI-Backend%20API-009688?logo=fastapi&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Containerization-2496ED?logo=docker&logoColor=white)
+![Modal](https://img.shields.io/badge/Modal-Serverless%20GPU%20Compute-000000)
+![Groq](https://img.shields.io/badge/Groq-LLM%20Inference-F55036)
+![Airflow](https://img.shields.io/badge/Airflow-Workflow%20Orchestration-017CEE?logo=apacheairflow&logoColor=white)
+![Prometheus](https://img.shields.io/badge/Prometheus-Monitoring-E6522C?logo=prometheus&logoColor=white)
+![MLflow](https://img.shields.io/badge/MLflow-Experiment%20Tracking-0194E2?logo=mlflow&logoColor=white)
+![DeepEval](https://img.shields.io/badge/DeepEval-LLM%20Evaluation-6E56CF)
+![Next.js](https://img.shields.io/badge/Next.js-Frontend-000000?logo=nextdotjs&logoColor=white)
+![Vercel](https://img.shields.io/badge/Vercel-Deployment-000000?logo=vercel&logoColor=white)
+
+
+
+
 
 ![Demo GIF](data/demo.gif)
 
@@ -13,7 +40,7 @@ The system is architected as a set of decoupled, asynchronous microservices to e
 
 ## Why From Scratch?
 
-To demonstrate a real understanding of everything that happens under the hood of RAG Frameworks. RezRag is built with full control and zero abstractions. No LangChain. No LlamaIndex. No RAG frameworks. There is no managed loader, no pre-built retriever, no abstracted LLM call.
+To demonstrate a real understanding of everything that happens under the hood of RAG Frameworks. RezRag is built with full control and zero abstractions. There is no managed loader, no pre-built retriever, no abstracted LLM call.
 
 
 ## Index
@@ -319,6 +346,32 @@ BitsAndBytesConfig(
 
 Eval script: `ml_backend/evaluation.py`.
 
+### Generation Quality (DeepEval)
+
+`eval_generation.py` scores the generator's actual output, judged by an LLM, on two metrics:
+
+- **Faithfulness** — answer claims are checked against the retrieved context.
+- **Answer Relevancy** — answer is checked against the query.
+
+Judge model: `GroqJudge`, a DeepEval model wrapping this project's own Groq client — no OpenAI key required.
+
+```bash
+python eval_generation.py --url http://127.0.0.1:9000 --limit 15
+```
+
+### Experiment Tracking (MLflow)
+
+`eval.py` and `eval_generation.py` both support `--mlflow`, logging runs to a local MLflow store instead of stdout only. Retrieval and generation quality become comparable across config changes — RRF_K sweeps, reranker on/off, judge model swaps.
+
+```bash
+python eval.py --url http://127.0.0.1:8000 --mlflow
+python eval_generation.py --url http://127.0.0.1:9000 --mlflow
+
+mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db
+```
+
+Runs are under `Model training` in the MLflow UI, not the `GenAI` traces view.
+
 ---
 
 ## Deployment
@@ -374,7 +427,8 @@ RezRag/
 │   ├── generator_local.py    # Local quantized Qwen generator (FastAPI)
 │   ├── cache.py              # diskcache SQLite query result cache
 │   ├── observability.py      # Prometheus metrics + loguru logging
-│   └── evaluation.py         # MRR, Hit@K, P@K, bootstrap CI
+│   ├── evaluation.py         # MRR, Hit@K, P@K, bootstrap CI (+ optional MLflow logging)
+│   └── eval_generation.py    # Faithfulness / answer relevancy via DeepEval (Groq judge)
 ├── data_pipeline/
 │   ├── preprocessor.py       # Raw Yelp NDJSON filtering + scoring
 │   ├── chunker.py            # Token-bounded semantic chunking
@@ -383,6 +437,9 @@ RezRag/
 ├── deployment/
 │   ├── modal_retriever.py    # Modal serverless — retriever
 │   └── modal_generator.py    # Modal serverless — generator
+├── dags/
+│   └── rezrag_pipeline_dag.py  # Airflow DAG 
+├── .github/workflows/ci.yml  # pytest on push/PR
 ├── tests/                    # pytest suite — cache, chunking, eval metrics, generator helpers
 ├── conftest.py
 ├── requirements.txt
@@ -413,12 +470,10 @@ RezRag/
 git clone https://github.com/your-username/rezrag.git
 cd rezrag
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+source venv/bin/activate
 
 pip install -r requirements.txt
-# requirements.txt pins CPU torch; for GPU (local inference), install the matching
-# CUDA build first, e.g.:
-#   pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124 --index-url https://download.pytorch.org/whl/cu124
+
 python -m spacy download en_core_web_sm
 ```
 
@@ -448,13 +503,21 @@ python data_pipeline/embedder.py
 python data_pipeline/ingester.py
 ```
 
+**Run as an orchestrated Airflow DAG** (`dags/rezrag_pipeline_dag.py`), 4 tasks in sequence instead of 4 manual invocations. 
+
+```bash
+pip install -r orchestration/requirements-airflow.txt   # separate venv, WSL2 on Windows
+export AIRFLOW_HOME=~/airflow-home
+export AIRFLOW__CORE__DAGS_FOLDER="<repo-root>/dags"
+airflow db migrate
+airflow standalone
+```
+
 ### Run Services
 
 ```bash
-# Terminal 1
 uvicorn ml_backend.retriever:app --port 8000
 
-# Terminal 2 — Groq (production) or generator_local (offline/local GPU)
 uvicorn ml_backend.generator_groq:app --port 9000
 
 # Terminal 3
@@ -472,6 +535,8 @@ python ml_backend/evaluation.py --url http://127.0.0.1:8000 --top_k 8 --verbose
 ```bash
 pytest tests/
 ```
+
+Runs automatically on every push/PR to `main` via `.github/workflows/ci.yml`.
 
 ---
 

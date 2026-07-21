@@ -1,13 +1,22 @@
 import argparse
 import json
+import os
 import random
 import re
+import sys
 import time
 from collections import defaultdict
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import requests
 from tabulate import tabulate
+
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+import config
 
 METRO_AREAS: Dict[str, List[str]] = {
     "philadelphia": [
@@ -1038,7 +1047,12 @@ def location_accuracy(
 
 
 def evaluate(
-    url: str, top_k: int = 5, verbose: bool = False, out: Optional[str] = None
+    url: str,
+    top_k: int = 5,
+    verbose: bool = False,
+    out: Optional[str] = None,
+    use_mlflow: bool = False,
+    mlflow_experiment: str = "rezrag-retrieval-eval",
 ):
     strategies = [
         {"name": "Hybrid + Rerank", "do_rerank": True},
@@ -1120,6 +1134,8 @@ def evaluate(
 
         all_records.extend(records)
         _print_strategy_summary(strat["name"], records, top_k)
+        if use_mlflow:
+            _log_to_mlflow(mlflow_experiment, strat["name"], records, url, top_k)
 
     if unlabeled:
         print(f"\nRobustness pass {'─'*20}")
@@ -1155,6 +1171,43 @@ def _agg(records: List[Dict], key: str):
 
 def _mean(vals):
     return sum(vals) / len(vals) if vals else 0.0
+
+
+def _log_to_mlflow(
+    experiment: str, strategy: str, records: List[Dict], url: str, top_k: int
+) -> None:
+    import mlflow
+
+    if "MLFLOW_TRACKING_URI" not in os.environ:
+        mlruns_dir = Path(__file__).resolve().parent.parent / "mlruns"
+        mlruns_dir.mkdir(exist_ok=True)
+        db_path = (mlruns_dir / "mlflow.db").as_posix()
+        mlflow.set_tracking_uri(f"sqlite:///{db_path}")
+
+    mlflow.set_experiment(experiment)
+    with mlflow.start_run(run_name=strategy):
+        mlflow.log_params({
+            "strategy": strategy,
+            "retriever_url": url,
+            "top_k": top_k,
+            "rrf_k": config.RRF_K,
+            "initial_k": config.INITIAL_K,
+            "max_duplicates": config.MAX_DUPLICATES,
+            "n_queries": len(records),
+        })
+        mrr_vals = _agg(records, "mrr5")
+        ci = bootstrap_ci(mrr_vals)
+        loc_vals = [r["loc_acc"] for r in records if r["loc_acc"] is not None]
+        mlflow.log_metrics({
+            "mrr5": _mean(mrr_vals),
+            "mrr5_ci_low": ci[0],
+            "mrr5_ci_high": ci[1],
+            "hit3": _mean(_agg(records, "hit3")),
+            "hit5": _mean(_agg(records, "hit5")),
+            "p5": _mean(_agg(records, "p5")),
+            "loc_acc": _mean(loc_vals) if loc_vals else 0.0,
+            "avg_latency_ms": _mean(_agg(records, "latency")),
+        })
 
 
 def _print_strategy_summary(name: str, records: List[Dict], top_k: int):
@@ -1317,6 +1370,21 @@ if __name__ == "__main__":
     parser.add_argument("--top_k", type=int, default=5)
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--out", type=str, default=None)
+    parser.add_argument(
+        "--mlflow", action="store_true",
+        help="Log per-strategy metrics to MLflow (local ./mlruns by default; "
+             "set MLFLOW_TRACKING_URI to point elsewhere).",
+    )
+    parser.add_argument(
+        "--mlflow-experiment", type=str, default="rezrag-retrieval-eval",
+    )
     args = parser.parse_args()
 
-    evaluate(url=args.url, top_k=args.top_k, verbose=args.verbose, out=args.out)
+    evaluate(
+        url=args.url,
+        top_k=args.top_k,
+        verbose=args.verbose,
+        out=args.out,
+        use_mlflow=args.mlflow,
+        mlflow_experiment=args.mlflow_experiment,
+    )

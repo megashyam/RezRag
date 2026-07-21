@@ -460,8 +460,8 @@ export default function Home() {
             }}>
               {[
                 { layer: "Data", items: ["orjson 3–5× faster than stdlib json", "Filter cascade: O(1) set → date string → word count", "df.melt() + df.explode() — C-level vectorization", "Generator-based Qdrant ingestion — flat RAM"] },
-                { layer: "Chunking", items: ["Tokenized with the embedding model's own tokenizer, not a mismatched one", "Over-long single reviews truncated instead of blowing the token budget", "Single-pass progress_apply — no intermediate DataFrames"] },
-                { layer: "Retrieval", items: ["Full-corpus BM25 fused with dense search — not just a rescore of the dense shortlist", "Reranker truncates via its own 512-token tokenizer, not a fixed char cutoff", "spaCy NER geo-filter cuts Qdrant search space"] },
+                { layer: "Chunking", items: ["Long single reviews truncated", "Single-pass progress_apply"] },
+                { layer: "Retrieval", items: ["Full-corpus BM25 fused with dense search", "Reranker truncates via its own 512-token tokenizer", "spaCy NER geo-filter cuts Qdrant search space"] },
                 { layer: "Deployment", items: ["Modal Volume — models cached, not re-downloaded", "keep_warm=1 — one container always hot", "Qdrant co-located in same GCP region as Modal", "6-minute query cache — repeated queries skip retrieval"] },
                 { layer: "Frontend", items: ["setTimeout(fn,30) — token updates batched to ~60fps", "Leaflet lazy-loaded (ssr:false) — no SSR crash", "Health check via API route — no CORS on Modal calls"] },
               ].map(({ layer, items }) => (
